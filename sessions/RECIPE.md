@@ -10,7 +10,7 @@ A panel block that shows, for every coding-agent session, which model it runs an
    - Line 1: program icon, the session's name (the folder it was started in; `~` for home), and its status on the right ("Working" with a spinner while working).
    - Line 2: the model in 16px semibold ("Opus 5.5"), a five-step effort meter with its label ("xhigh"), an "ULTRACODE" badge when that mode is on, and the program name on the right.
    - Line 3: a small context meter with its percentage, "space › tab", the time since its last reply, and how long its prompt cache lasts.
-   - While the session works, a 2px line under the header moves (native `loop`).
+   - While the session is working, a short pulse of light runs left to right along a 2px line under the header, restarting from the left every 1.6 seconds.
 2. **Other sessions** with a count. Each session takes two lines: name, relative time and a status dot; then model, effort meter and context meter, with the space name on the right when it differs from the folder name. Sessions awaiting your input come first, followed by working, done, and idle, newest first within each group.
 3. **Sub-agent tree** under each session: a 1px guide rail from the parent's icon, one line per sub-agent (status dot, name, model, effort meter, elapsed time). Running ones are bright; finished ones fold into "N done".
 4. **Background work.** Commands that a Claude Code session left running in the background (such as a training script or a monitor) appear on their own lines in the session's tree with their elapsed time. The session also shows an "N tasks running" badge ("N scheduled" when only scheduled prompts remain) even when the agent itself is idle. These sessions sort above idle ones.
@@ -34,6 +34,7 @@ A panel block that shows, for every coding-agent session, which model it runs an
 ## Watch out
 
 - It depends on [herdr-over9k](https://github.com/herunan/herdr-over9k) being installed and on screen; without it, models appear as "Model unknown".
+- `loop()` only swings a value back and forth. For a one-way sweep, the line is its own nested view (`cx.new`) that draws a new element at the left on each pass and moves it with `transition("left", ...)`, so only that view is redrawn.
 - The over9k sub-agent file is named by the POSIX `cksum` of the transcript path; the JS implementation must match the system `cksum` output (see the test).
 - A new Claude Code session has no model until its first reply.
 - Codex was checked with demo data only.

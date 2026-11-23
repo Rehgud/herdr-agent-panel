@@ -94,6 +94,33 @@ function guide(t, shape) {
     .when(shape === "end", (el) => el.child(div().absolute().left(RAIL).top(0).w(GUT - RAIL - 1).h(SUB_H / 2 + 1).border_l(1).border_b(1).rounded_bl(5).border_color(line)));
 }
 
+// The line under the title while the current session works: a light that sweeps left to right
+// and starts over, since loop() only swings there and back. Its own view, so a pass redraws only it.
+const SWEEP_MS = 1600;
+class Sweep extends View {
+  init(_props, cx) {
+    this.pass = 0;
+    this.across = false;
+    this.width = 368;
+    if (checking()) return;
+    cx.timer.every(SWEEP_MS, (cx) => {
+      if (!visible()) return;
+      this.pass += 1;
+      this.across = false;
+      cx.notify();
+      // A new element is drawn where it starts; only the target after that slides.
+      cx.timer.after(50, (cx) => { this.across = true; cx.notify(); });
+    });
+  }
+
+  render() {
+    return div().id("sweep").relative().size_full()
+      .on_size_change((size, cx) => { if (size.width !== this.width) { this.width = size.width; cx.notify(); } })
+      .child(div().id(`sweep-${this.pass}`).absolute().top(0).w(72).h(2).rounded(1).bg(theme().working)
+        .left(this.across ? this.width : -72).transition("left", { duration: SWEEP_MS - 100, easing: "ease-in-out" }));
+  }
+}
+
 const tabLabel = (a, tx) => (/^\d+$/.test(a.tab_name ?? "") ? tx.tabN(a.tab_name) : a.tab_name);
 
 export default class Sessions extends View {
@@ -105,7 +132,7 @@ export default class Sessions extends View {
     this.subs = {};    // terminal -> its agent's own sub-agents
     this.tasks = {};   // terminal -> what its agent runs in the background, or has scheduled
     this.open = new Set(); // sessions whose finished sub-agents show
-    this.width = 368;
+    this.sweep = cx.new(Sweep);
     this.lang = pickLang(props()?.lang);
     if (!this.lang && !props()?.demo) {
       // The last detection draws first so a Korean screen doesn't flash English.
@@ -369,8 +396,7 @@ export default class Sessions extends View {
     const working = current?.status === "working";
 
     // A demo can be given the width of the panel it is pictured as (props().width).
-    const root = v_flex().id("root").size_full().when(Boolean(demo && props().width), (el) => el.w(props().width)).bg(t.background).text_color(t.foreground)
-      .on_size_change((size, cx) => { if (size.width !== this.width) { this.width = size.width; cx.notify(); } });
+    const root = v_flex().id("root").size_full().when(Boolean(demo && props().width), (el) => el.w(props().width)).bg(t.background).text_color(t.foreground);
     if (!list.length) return root.items_center().justify_center().gap(6).px(28)
       .child(svg("icons/agent.svg").size(26).text_color(t.dim).mb(4))
       .child(div().text_size(13).font_weight(600).text_color(t.foreground).child(tx.emptyTitle))
@@ -390,7 +416,7 @@ export default class Sessions extends View {
       .when(this.legend, (el) => el.child(this.legendBox(t)))
       // The line under the title runs while the current session works.
       .child(div().relative().h(2).mx(6).mb(6).flex_none().rounded(1).overflow_hidden().when(working, (el) => el.bg(alpha(t.working, "24"))
-        .child(div().absolute().top(0).w(72).h(2).rounded(1).bg(t.working).loop("left", { from: -72, to: this.width, period: 3200 }))))
+        .child(this.sweep)))
       .child(current ? this.session(t, current, terms, tabs, now, true) : note(tx.noneHere))
       .child(div().h(1).mx(6).my(12).flex_none().bg(t.border))
       .child(header(title(tx.others),
