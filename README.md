@@ -1,48 +1,50 @@
 # Herdr Agent Panel
 
-Herdr 데스크톱 앱의 오른쪽 패널에 **AI 사용량**과 **세션별 모델 현황**을 한눈에 보여 주는 mod 모음입니다. Claude Code와 Antigravity(agy)를 함께 쓰는 사람을 위해 만들었습니다.
+**English** | [한국어](README.ko.md)
 
-> **English summary.** Three mods for the Herdr desktop app: `ai-usage` (Claude Code and Antigravity plan usage as bars, including Claude's per-model weekly limits such as Fable), `sessions` (the model, reasoning effort, context and sub-agent tree of every agent session), and `tabs-flow` (a tab bar that pins this panel open). The UI is in Korean. Unofficial; not affiliated with Herdr, Anthropic, Google or OpenAI.
+Mods for the Herdr desktop app that add **AI plan usage** and **each session's model** to the right-side panel, so you can see both at a glance. Built for people who use Claude Code and Antigravity (agy) side by side.
 
-![전체 패널](docs/panel.png)
+> The panel's labels are in Korean (for example, "5시간" = 5 hours, "7일" = 7 days, "모델별" = by model, "작업 중" = working).
 
-## 들어 있는 mod
+![The whole panel](docs/panel.png)
 
-| mod | 하는 일 |
+## Mods
+
+| Mod | What it does |
 |---|---|
-| [`ai-usage`](ai-usage/) | Claude Code의 5시간·7일 한도와 모델별 주간 한도(예: Fable), Antigravity의 Gemini·Claude/GPT 한도를 막대로 보여 줍니다. "모델별"을 펼치면 모델별 토큰 비중도 볼 수 있습니다. |
-| [`sessions`](sessions/) | 지금 보고 있는 세션의 모델·추론 강도·컨텍스트 사용률을 크게 보여 주고, 다른 세션과 각 세션이 실행 중인 하위 에이전트를 트리로 보여 줍니다. 에이전트가 답변을 마친 뒤에도 백그라운드에서 실행 중인 작업(예: 학습 스크립트)이 있으면 따로 표시합니다. |
-| [`tabs-flow`](tabs-flow/) | Herdr 기본 탭 바에 **Flow** 버튼을 더하고, 어느 스페이스로 전환하든 이 패널이 자동으로 열리게 합니다. |
+| [`ai-usage`](ai-usage/) | Shows Claude Code's 5-hour and 7-day limits, its per-model weekly limits (such as Fable), and Antigravity's Gemini and Claude/GPT limits as bars. Expand "모델별" (by model) to see each Claude model's share of tokens. |
+| [`sessions`](sessions/) | Shows the model, reasoning effort and context usage of the current session, then lists your other sessions and their running sub-agents as a tree. Commands still running in the background after the agent has replied (such as a training script) are shown too. |
+| [`tabs-flow`](tabs-flow/) | Adds a **Flow** button to Herdr's default tab bar and opens this panel automatically whenever you switch spaces. |
 
-세 개를 함께 쓰도록 만들었지만, 각각 따로 설치해도 됩니다.
+They are built to work together, but each one can be installed on its own.
 
-## 요구 사항
+## Requirements
 
-- Herdr 데스크톱 앱 0.1.16에서 개발하고 동작을 확인했습니다.
-- macOS(`stat -f`, `ps` 등 macOS 명령을 씁니다), `python3`, `jq`
+- Developed and tested on Herdr desktop app 0.1.16.
+- macOS (the scripts use macOS commands such as `stat -f` and `ps`), `python3`, and `jq`.
 - `ai-usage`
-  - Claude Code(Pro·Max 구독): 사용량은 구독 요금제에서만 표시됩니다.
-  - Antigravity 섹션은 Antigravity CLI(`agy`)를 쓸 때만 표시됩니다.
-- `sessions`: 모델·추론 강도·하위 에이전트 정보는 [herdr-over9k](https://github.com/herunan/herdr-over9k) 사이드바가 생성하는 캐시에서 읽어 오므로, over9k 사이드바를 미리 설치해 두어야 합니다.
+  - Claude Code with a Pro or Max subscription: usage is only shown for subscription plans.
+  - The Antigravity section appears only if you use the Antigravity CLI (`agy`).
+- `sessions`: model, effort and sub-agent details are read from the cache that the [herdr-over9k](https://github.com/herunan/herdr-over9k) sidebar writes, so install the over9k sidebar first.
 
-## 설치
+## Installation
 
-1. mod 폴더를 Herdr 설정 경로(`~/.config/herdr-app/mods/`)로 복사합니다.
+1. Copy the mod folders into Herdr's config folder (`~/.config/herdr-app/mods/`).
 
    ```sh
    cp -R ai-usage/mods/ai-usage sessions/mods/sessions tabs-flow/mods/tabs-flow ~/.config/herdr-app/mods/
    ```
 
-2. 개인 레이아웃에 패널을 추가합니다. Herdr 기본 레이아웃은 직접 수정할 수 없으니 먼저 복제합니다.
+2. Add the panel to a custom layout. Herdr's default layouts can't be edited directly, so clone one first.
 
    ```sh
    herdr-app do layout.clone '{"name":"main","as":"my-main"}'
    ```
 
-   `~/.config/herdr-app/layouts/my-main.json`에서 두 곳을 고칩니다.
+   Then make two changes in `~/.config/herdr-app/layouts/my-main.json`:
 
-   - 탭 바: `"id": "tabs"` 블록의 `"mod": "tabs"`를 `"mod": "tabs-flow"`로 바꿉니다.
-   - 패널: `"id": "panel-body"` 스택의 `children`에 아래 노드를 추가합니다.
+   - Tab bar: in the block with `"id": "tabs"`, change `"mod": "tabs"` to `"mod": "tabs-flow"`.
+   - Panel: add this node to the `children` of the `"id": "panel-body"` stack.
 
    ```json
    { "id": "flow", "type": "column", "children": [
@@ -50,25 +52,25 @@ Herdr 데스크톱 앱의 오른쪽 패널에 **AI 사용량**과 **세션별 �
      { "id": "flow-main", "type": "block", "content": { "mod": "sessions" }, "size": { "weight": 1 } } ] }
    ```
 
-   위 설정에는 초기값으로 `"px": 330`이 들어가지만, 실제로는 `usage` 블록의 높이가 내용에 맞춰 자동으로 조절됩니다.
+   `"px": 330` is only the starting height; the `usage` block resizes itself to fit its content.
 
-3. 사용량을 파일로 남기는 상태줄 스크립트를 설정합니다. `ai-usage`는 이 파일을 읽습니다.
+3. Set up the status line scripts that save usage to files. `ai-usage` reads these files.
 
-   - **Claude Code**: [`extras/claude-statusline-usage.sh`](ai-usage/extras/claude-statusline-usage.sh)를 `~/.claude/`에 복사하고, `~/.claude/settings.json`에 다음을 넣습니다. 이미 사용 중인 상태줄 스크립트가 있다면, 스크립트 맨 앞에서 표준 입력(stdin)을 `~/.claude/state/statusline-latest.json`에 저장하는 부분만 기존 스크립트에 추가해도 됩니다.
+   - **Claude Code**: copy [`extras/claude-statusline-usage.sh`](ai-usage/extras/claude-statusline-usage.sh) to `~/.claude/` and add this to `~/.claude/settings.json`. If you already have a status line script, you can instead add just the part at the top that saves stdin to `~/.claude/state/statusline-latest.json`.
 
      ```json
      "statusLine": { "type": "command", "command": "~/.claude/claude-statusline-usage.sh", "refreshInterval": 30 }
      ```
 
-   - **Antigravity**: [`extras/agy-statusline-usage.sh`](ai-usage/extras/agy-statusline-usage.sh)를 `~/.gemini/antigravity-cli/`에 복사하고, `~/.gemini/antigravity-cli/settings.json`에 다음을 넣습니다. `stack_with_default` 덕분에 agy의 원래 하단 표시는 그대로 남습니다.
+   - **Antigravity**: copy [`extras/agy-statusline-usage.sh`](ai-usage/extras/agy-statusline-usage.sh) to `~/.gemini/antigravity-cli/` and add this to `~/.gemini/antigravity-cli/settings.json`. With `stack_with_default`, agy's own status line stays as it is.
 
      ```json
      "statusLine": { "type": "command", "command": "sh \"$HOME/.gemini/antigravity-cli/agy-statusline-usage.sh\"", "stack_with_default": true }
      ```
 
-     `$HOME` 환경 변수가 확장되지 않는 환경이라면 실제 절대 경로를 적어 주세요.
+     If `$HOME` isn't expanded in your setup, write the full absolute path instead.
 
-4. mod를 검증하고 레이아웃을 적용합니다.
+4. Check the mods and switch to the layout.
 
    ```sh
    herdr-app check ~/.config/herdr-app/mods/ai-usage
@@ -77,35 +79,35 @@ Herdr 데스크톱 앱의 오른쪽 패널에 **AI 사용량**과 **세션별 �
    herdr-app do layout.switch '{"name":"my-main"}'
    ```
 
-설정 파일을 고치기 전에 백업해 두세요. 화면이 꼬이면 `ctrl-alt-shift-escape`로 기본 레이아웃으로 돌아갈 수 있습니다.
+Back up your config files before editing them. If the layout breaks, press `ctrl-alt-shift-escape` to go back to the default layout.
 
-## 데이터는 어디서 오나요
+## Where the data comes from
 
-모든 데이터는 로컬 컴퓨터 안에서만 읽으며, 외부로 전송하는 정보는 없습니다.
+Everything is read locally on your computer; nothing is sent anywhere.
 
-| 항목 | 출처 | 갱신 |
+| Item | Source | Refresh |
 |---|---|---|
-| Claude 5시간·7일 | Claude Code 상태줄이 저장한 파일 | 파일이 바뀌는 즉시(상태줄은 30초마다 갱신) |
-| Claude 모델별 주간 한도(예: Fable 7일) | `claude -p "/usage"`. 모델을 호출하지 않아 토큰을 소모하지 않고, 세션 기록도 남기지 않습니다(`--no-session-persistence`). | 30초 |
-| 모델별 토큰 비중 | `~/.claude/projects`의 대화 기록(하위 에이전트 포함, 캐시 읽기 제외). 새로 추가된 줄만 읽습니다. | 30초 |
-| Antigravity 한도 | agy 상태줄이 저장한 파일. agy는 첫 요청을 보낸 뒤부터 한도를 알려 줍니다. | agy가 응답할 때 |
-| 세션·하위 에이전트 | Herdr의 `agents()`·`terminals()`, over9k 캐시 | 5초 |
-| 백그라운드 작업 | over9k가 대화 기록에서 찾아 남긴 캐시(`~/.cache/over9k/tasks-*`) | 5초 |
+| Claude 5-hour and 7-day limits | The file saved by Claude Code's status line | As soon as the file changes (the status line refreshes every 30 seconds) |
+| Claude per-model weekly limits (e.g. Fable 7-day) | `claude -p "/usage"`. It calls no model, so it uses no tokens, and it leaves no session record (`--no-session-persistence`). | 30 seconds |
+| Token share by model | Conversation logs in `~/.claude/projects` (sub-agents included, cache reads excluded). Only new lines are read. | 30 seconds |
+| Antigravity limits | The file saved by agy's status line. agy reports its limits only after your first request. | Whenever agy replies |
+| Sessions and sub-agents | Herdr's `agents()` and `terminals()`, and the over9k cache | 5 seconds |
+| Background work | The cache over9k builds from conversation logs (`~/.cache/over9k/tasks-*`) | 5 seconds |
 
-갱신 간격은 각 `main.js`의 `cx.timer.every(...)` 값으로 바꿀 수 있습니다.
+You can change the intervals in the `cx.timer.every(...)` calls in each `main.js`.
 
-## 알아 두면 좋은 점
+## Good to know
 
-- **토큰 비중은 추정치입니다.** 캐시 읽기를 제외한 토큰 수 기준이라 실제 한도가 소모되는 비율과 다를 수 있습니다.
-- **Antigravity의 Claude와 GPT는 한도를 함께 씁니다.** agy는 둘을 `3p` 한 묶음으로 계산하므로 따로 나눠 보여 줄 수 없습니다.
-- **세션 이름은 세션을 시작한 폴더 이름입니다.** 홈 폴더는 `~`로 표시하고, 원래 세션 제목은 마우스를 올리면 볼 수 있습니다.
-- **`sessions`는 over9k에 의존합니다.** over9k가 없으면 모델 정보 자리에 "모델 확인 전"이 표시됩니다.
-- **Codex 세션**은 실제 환경에서 충분히 확인하지 못했습니다.
+- **The token share is an estimate.** It counts tokens without cache reads, so it can differ from how fast each limit is actually used up.
+- **Antigravity's Claude and GPT models share a single limit.** agy counts both in a single `3p` bucket, so they can't be shown separately.
+- **A session's name is the folder it was started in.** The home folder shows as `~`; hover over the name to see the original session title.
+- **`sessions` depends on over9k.** Without it, the model shows as "모델 확인 전" (model not known yet).
+- **Codex sessions** haven't been tested much in real-world use.
 
-## 라이선스
+## License
 
-- 이 레포의 코드: [MIT](LICENSE)
-- `tabs-flow`: Herdr 앱의 기본 `tabs` mod를 고친 것이라 [Apache License 2.0](tabs-flow/LICENSE)을 따릅니다.
-- 다른 프로젝트에서 가져온 코드는 [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md)에 정리했습니다.
+- Code in this repo: [MIT](LICENSE)
+- `tabs-flow` is a modified copy of the Herdr app's default `tabs` mod and is under the [Apache License 2.0](tabs-flow/LICENSE).
+- Code taken from other projects is listed in [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md).
 
-비공식 프로젝트이며 Herdr, Anthropic, Google, OpenAI와 관계가 없습니다. 각 제품명과 로고는 해당 회사의 상표입니다.
+This is an unofficial project and is not affiliated with Herdr, Anthropic, Google or OpenAI. Product names and logos are trademarks of their respective owners.
