@@ -3,6 +3,10 @@ import assert from "node:assert/strict";
 import { execSync } from "node:child_process";
 import * as L from "./lib.js";
 
+const { en, ko } = L.TEXT;
+const keys = (o, p = "") => Object.entries(o).flatMap(([k, v]) => (v && typeof v === "object" ? keys(v, `${p}${k}.`) : [`${p}${k}`])).sort();
+assert.deepEqual(keys(en), keys(ko), "TEXT.en and TEXT.ko have the same keys");
+
 // cksum matches the system's, ASCII and not.
 for (const s of ["/Users/me/.claude/projects/-Users-me/0f8e1c2a-0000-4000-8000-123456789abc.jsonl", "", "a", "한글 경로/x.jsonl", "x".repeat(300)]) {
   const sys = Number(execSync("cksum", { input: s }).toString().split(" ")[0]);
@@ -18,15 +22,21 @@ assert.equal(L.modelName("Gemini 4 Argon"), "Gemini 4 Argon");
 assert.equal(L.modelName(""), null);
 
 assert.deepEqual(["low", "medium", "high", "xhigh", "max", "Medium", "minimal", "none", null, "weird"].map(L.effortLevel), [1, 2, 3, 4, 5, 2, 0, 0, null, null]);
-assert.deepEqual([0, 59, 60, 3599, 3600, 86400 * 3].map(L.span), ["방금", "방금", "1분", "59분", "1시간", "3일"]);
-assert.equal(L.ago(30), "방금"); assert.equal(L.ago(125), "2분 전");
+assert.deepEqual([0, 59, 60, 3599, 3600, 86400 * 3].map((s) => L.span(s, ko)), ["방금", "방금", "1분", "59분", "1시간", "3일"]);
+assert.deepEqual([0, 59, 60, 3599, 3600, 86400 * 3].map((s) => L.span(s, en)), ["just now", "just now", "1m", "59m", "1h", "3d"]);
+assert.equal(L.ago(30, ko), "방금"); assert.equal(L.ago(125, ko), "2분 전");
+assert.equal(L.ago(30, en), "just now"); assert.equal(L.ago(125, en), "2m ago");
+assert.equal(L.elapsed(30, ko), "방금"); assert.equal(L.elapsed(3 * 3600, ko), "3시간째");
+assert.equal(L.elapsed(30, en), "just now"); assert.equal(L.elapsed(3 * 3600, en), "3h");
 
 // over9k's cache: a key line, then rows; running first, then newest.
 const cache = "v7 1 2 3\nagent-a\t100\tOld done\tgeneral-purpose\tclaude-opus-5-5\t50\t1\txhigh\t200000\t1\nagent-b\t300\tRunning\tclaude-code-guide\tclaude-haiku-5-5\t250\t1\tmedium\t200000\t0\nagent-c\t200\tNew done\tgeneral-purpose\tclaude-fable-5-2\t150\t1\t\t200000\t1\n";
-const subs = L.parseSubs(cache, { header: true });
+const subs = L.parseSubs(cache, { header: true, tx: ko });
 assert.deepEqual(subs.map((s) => s.id), ["agent-b", "agent-c", "agent-a"]);
 assert.deepEqual(subs[0], { id: "agent-b", name: "Running", type: "claude-code-guide", model: "Haiku 5.5", effort: "medium", startedAt: 250, lastAt: 300, done: false });
 assert.equal(subs[1].effort, null);
+assert.equal(L.parseSubs("c2\t10\t\t\tGemini\t5\t0\tmedium\t1\t0", { tx: ko })[0].name, "서브에이전트");
+assert.equal(L.parseSubs("c2\t10\t\t\tGemini\t5\t0\tmedium\t1\t0", { tx: en })[0].name, "Sub-agent");
 assert.deepEqual(L.parseSubs(""), []); assert.deepEqual(L.parseSubs(null), []);
 assert.equal(L.parseSubs("c1\t10\t\tsubagent\tGemini 4 Argon\t5\t0\tmedium\t1048576\t0")[0].model, "Gemini 4 Argon");
 assert.deepEqual(L.foldSubs(subs, false), { live: [subs[0]], done: [], finished: 2, more: 0 });
@@ -101,18 +111,21 @@ assert.deepEqual(bg[2], { kind: "cron", id: "c1", name: "Check the deploy", star
 assert.equal(bg[1].name, null);
 assert.deepEqual(L.parseTasks("v8 1 2 3\n"), []); assert.deepEqual(L.parseTasks(null), []);
 assert.deepEqual(bg.map(L.scheduled), [false, false, true, true]);
-assert.equal(L.taskBadge(bg), "작업 2개 진행 중"); assert.equal(L.taskBadge(bg.slice(2)), "예약 2개");
-assert.equal(L.taskBadge([]), null); assert.equal(L.taskBadge(undefined), null);
+assert.equal(L.taskBadge(bg, ko), "작업 2개 진행 중"); assert.equal(L.taskBadge(bg.slice(2), ko), "예약 2개");
+assert.equal(L.taskBadge(bg, en), "2 tasks running"); assert.equal(L.taskBadge(bg.slice(0, 1), en), "1 task running"); assert.equal(L.taskBadge(bg.slice(2), en), "2 scheduled");
+assert.equal(L.taskBadge([], ko), null); assert.equal(L.taskBadge(undefined, en), null);
 // Running: for how long; a wakeup: how long until; a cron job's schedule isn't a time.
-assert.deepEqual(bg.map((k) => L.taskWhen(k, 1000)), ["1분째", "15분째", "", "12분 뒤"]);
-assert.equal(L.taskWhen(bg[0], 950), "방금"); assert.equal(L.taskWhen(bg[3], 1700), "곧");
-assert.equal(L.taskWhen({ kind: "wakeup", when: null }, 1000), ""); assert.equal(L.taskWhen({ kind: "shell", startedAt: null }, 1000), "");
+assert.deepEqual(bg.map((k) => L.taskWhen(k, 1000, ko)), ["1분째", "15분째", "", "12분 뒤"]);
+assert.deepEqual(bg.map((k) => L.taskWhen(k, 1000, en)), ["1m", "15m", "", "in 12m"]);
+assert.equal(L.taskWhen(bg[0], 950, ko), "방금"); assert.equal(L.taskWhen(bg[3], 1700, ko), "곧");
+assert.equal(L.taskWhen(bg[0], 950, en), "just now"); assert.equal(L.taskWhen(bg[3], 1700, en), "soon");
+assert.equal(L.taskWhen({ kind: "wakeup", when: null }, 1000, ko), ""); assert.equal(L.taskWhen({ kind: "shell", startedAt: null }, 1000, en), "");
 // A resting session with a task still running goes over the finished and idle ones, under the working.
 assert.deepEqual(L.sortSessions(list, (a) => a.address === "t1").map((a) => a.address), ["t3", "t5", "t2", "t1", "t4", "t6"]);
 assert.deepEqual(L.sortSessions(list, (a) => a.address === "t2").map((a) => a.address), ["t3", "t5", "t2", "t4", "t1", "t6"]);
 
 // The demo's made-up sessions, read as the panel reads real ones.
-const demo = L.demoData(100000);
+const demo = L.demoData(100000, "ko");
 assert.equal(L.pickCurrent(demo.list, demo.focus).address, "d1");
 assert.deepEqual(demo.list.map((a) => L.folderName(demo.terms.find((k) => k.address === a.address).cwd, "/Users/me")), ["my-app", "api-server", "docs-site", "ml-train"]);
 assert.deepEqual(demo.list.map((a) => { const d = L.details(a, { saved: demo.saved[a.address] }); return [d.model, d.effort, d.context]; }),
@@ -120,7 +133,13 @@ assert.deepEqual(demo.list.map((a) => { const d = L.details(a, { saved: demo.sav
 assert.deepEqual(L.argvModel(demo.terms.find((k) => k.parent === "d1").argv), { model: "Gemini 4 Argon", effort: "medium" });
 const folded = L.foldSubs(demo.subs.d1, false);
 assert.deepEqual([folded.live.length, folded.done.length, folded.finished], [1, 0, 3]);
-assert.equal(L.taskBadge(demo.tasks.d4), "작업 1개 진행 중"); assert.equal(L.taskWhen(demo.tasks.d4[0], demo.now), "3시간째");
+assert.equal(L.taskBadge(demo.tasks.d4, ko), "작업 1개 진행 중"); assert.equal(L.taskWhen(demo.tasks.d4[0], demo.now, ko), "3시간째");
+const demoEn = L.demoData(100000, "en");
+assert.deepEqual([demo.subs.d1.map((s) => s.name), demo.terms[4].name, demo.tasks.d4[0].name],
+  [["세션 만료 처리 조사", "로그인 흐름 파악", "실패한 테스트 원인 찾기", "의존성 버전 확인"], "변경 사항 교차 검토", "전체 데이터로 학습 실행"]);
+assert.deepEqual([demoEn.subs.d1.map((s) => s.name), demoEn.terms[4].name, demoEn.tasks.d4[0].name],
+  [["Look into session expiry", "Map the login flow", "Find why the test fails", "Check dependency versions"], "Cross-check the changes", "Train on the full dataset"]);
+assert.equal(L.taskBadge(demoEn.tasks.d4, en), "1 task running"); assert.equal(L.taskWhen(demoEn.tasks.d4[0], demoEn.now, en), "3h");
 const busy = (a) => (demo.tasks[a.address] ?? []).some((k) => !L.scheduled(k));
 assert.deepEqual(L.sortSessions(demo.list.slice(1), busy).map((a) => a.space_name), ["ml-train", "docs-site", "api-server"]);
 console.log("lib ok");

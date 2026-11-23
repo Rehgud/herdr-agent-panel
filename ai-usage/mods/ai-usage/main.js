@@ -2,7 +2,7 @@
 // reset countdowns. The overall limits come from the file each status line saves on every refresh
 // (~/.claude/statusline-usage.sh, ~/.gemini/antigravity-cli/statusline-usage.sh); Claude's
 // per-model weekly limits (Fable, ...) from Claude Code's own /usage (plan-usage.py), which the
-// status line doesn't carry. Per-model rows fold away under "모델별".
+// status line doesn't carry. Per-model rows fold away under "By model" (모델별).
 import { View, div } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
 import { home, appHome, readTextFile, watchFolder, exec, theme, checking, layout, settings, run, props } from "herdr";
@@ -11,7 +11,28 @@ const SOURCES = {
   claude: { dir: ".claude/state", file: "statusline-latest.json" },
   agy: { dir: ".cache/agy-statusline", file: "latest.json" },
 };
-const WINDOW = { five_hour: "5시간", seven_day: "7일", "5h": "5시간", "7d": "7일", weekly: "7일" };
+const WINDOW = { five_hour: "w5", seven_day: "w7", "5h": "w5", "7d": "w7", weekly: "w7" };
+const TEXT = {
+  en: {
+    w5: "5h", w7: "7d", unitD: "d", unitH: "h", unitM: "m",
+    byModel: "By model", share5: "Token share 5h", share7: "Token share 7d",
+    justNow: "just now", ago: (s) => `${s} ago`,
+    emptyClaude: "Shows up after you run Claude Code once", emptyAgy: "Shows up after your first chat in agy",
+  },
+  ko: {
+    w5: "5시간", w7: "7일", unitD: "일", unitH: "시간", unitM: "분",
+    byModel: "모델별", share5: "토큰 비중 5시간", share7: "토큰 비중 7일",
+    justNow: "방금", ago: (s) => `${s} 전`,
+    emptyClaude: "Claude Code를 한 번 실행하면 표시돼요", emptyAgy: "agy에서 한 번 대화하면 표시돼요",
+  },
+};
+const pickLang = (v) => (v === "en" || v === "ko" ? v : null);
+// The mod runtime has no Intl or navigator, so macOS's first preferred language decides.
+async function detectLang() {
+  const r = await exec("defaults", ["read", "-g", "AppleLanguages"]).catch(() => null);
+  const first = /^\s*"?([\w-]+)"?,?\s*$/m.exec((r?.stdout ?? "").replace("(", ""))?.[1] ?? "";
+  return first.toLowerCase().startsWith("ko") ? "ko" : "en";
+}
 // agy's quota groups: gemini-* for every Gemini model, 3p-* shared by Claude and GPT in agy.
 const AGY_GROUP = { gemini: "Gemini", "3p": "Claude·GPT" };
 const MOD = "ai-usage";
@@ -19,13 +40,14 @@ const MOD = "ai-usage";
 export const MODEL_COLOR = { fable: "#e5484d", opus: "#f0883e", sonnet: "#f2c94c", haiku: "#e6d5a8" };
 const cap = (s) => (s ? s[0].toUpperCase() + s.slice(1) : "");
 
-// "2시간 5분", "3일 4시간", "12분"
-export function span(sec) {
+// "2h 5m", "3d 4h", "12m" (ko: "2시간 5분")
+export function span(sec, tx) {
   const s = Math.max(0, Math.round(sec));
   const d = Math.floor(s / 86400), h = Math.floor((s % 86400) / 3600), m = Math.floor((s % 3600) / 60);
-  if (d) return h ? `${d}일 ${h}시간` : `${d}일`;
-  if (h) return m ? `${h}시간 ${m}분` : `${h}시간`;
-  return `${Math.max(m, 1)}분`;
+  const { unitD, unitH, unitM } = tx;
+  if (d) return h ? `${d}${unitD} ${h}${unitH}` : `${d}${unitD}`;
+  if (h) return m ? `${h}${unitH} ${m}${unitM}` : `${h}${unitH}`;
+  return `${Math.max(m, 1)}${unitM}`;
 }
 
 // One limit: pct used (0-100; 0 once its reset has passed, whatever the file still says) and
@@ -63,22 +85,22 @@ export function modelSplit(tokens) {
 }
 
 // The shared limits from the status line: five_hour, seven_day.
-export function claudeRows(rl, nowSec) {
+export function claudeRows(rl, nowSec, tx) {
   return ["five_hour", "seven_day"].map((k) => ({
-    label: `Claude ${WINDOW[k]}`,
+    label: `Claude ${tx[WINDOW[k]]}`,
     lim: limit(rl?.[k]?.used_percentage, Number(rl?.[k]?.resets_at) || null, nowSec),
   }));
 }
 
-// Per-model limits from /usage (plan-usage.py): "Current week (Fable)" -> "Fable 7일".
-export function claudeModelRows(windows, nowSec) {
+// Per-model limits from /usage (plan-usage.py): "Current week (Fable)" -> "Fable 7d".
+export function claudeModelRows(windows, nowSec, tx) {
   return (windows ?? []).filter((w) => w.model)
-    .map((w) => ({ label: `${w.model} ${WINDOW[w.window] ?? w.window}`, lim: limit(w.pct, w.resets_at ?? null, nowSec) }));
+    .map((w) => ({ label: `${w.model} ${tx[WINDOW[w.window]] ?? w.window}`, lim: limit(w.pct, w.resets_at ?? null, nowSec) }));
 }
 
 // One row per bucket agy reports, Gemini before Claude·GPT; `model` marks per-model buckets
-// (gemini-argon-wtu-weekly -> "Gemini Argon 7일"), the rest are a whole group's.
-export function agyRows(q, nowSec) {
+// (gemini-argon-wtu-weekly -> "Gemini Argon 7d"), the rest are a whole group's.
+export function agyRows(q, nowSec, tx) {
   const used = (b) => {
     const t = Date.parse(b?.reset_time ?? "");
     return limit((1 - (b?.remaining_fraction ?? 1)) * 100, Number.isNaN(t) ? null : t / 1000, nowSec);
@@ -88,7 +110,7 @@ export function agyRows(q, nowSec) {
     .map((k) => { const parts = k.split("-"); return { k, group: parts[0], win: parts.at(-1), model: parts.length > 2 ? parts[1] : "" }; })
     .sort((a, b) => order(a.group) - order(b.group) || (a.model ? 1 : 0) - (b.model ? 1 : 0) || a.k.localeCompare(b.k))
     .map(({ k, group, win, model }) => ({
-      label: [AGY_GROUP[group] ?? cap(group), cap(model), WINDOW[win] ?? win].filter(Boolean).join(" "),
+      label: [AGY_GROUP[group] ?? cap(group), cap(model), tx[WINDOW[win]] ?? win].filter(Boolean).join(" "),
       lim: used(q[k]),
       model: Boolean(model),
       group,
@@ -110,7 +132,18 @@ export default class AiUsage extends View {
     this.plan = null;
     this.split = null;
     this.open = { claude: false, agy: false };
-    if (props()?.demo) { this.demo(Date.now() / 1000); return; }
+    this.lang = pickLang(props()?.lang);
+    if (props()?.demo) { this.lang ??= "en"; this.demo(Date.now() / 1000); return; }
+    if (!this.lang) {
+      // The last detection draws first so a Korean screen doesn't flash English.
+      try { this.lang = pickLang(localStorage.getItem("lang")); } catch { /* English until detected */ }
+      this.lang ??= "en";
+      if (!checking()) cx.spawn(async (cx) => {
+        this.lang = await detectLang();
+        try { localStorage.setItem("lang", this.lang); } catch { /* not remembered */ }
+        cx.notify();
+      });
+    }
     try { Object.assign(this.open, JSON.parse(localStorage.getItem("open") ?? "{}")); } catch { /* defaults */ }
     cx.spawn(async (cx) => {
       const text = await readTextFile(`${home()}/.claude.json`).catch(() => null);
@@ -124,7 +157,7 @@ export default class AiUsage extends View {
       cx.spawn(async (cx) => { for (;;) { await watchFolder(dir); this.reload(name, cx); } });
     }
     if (checking()) return;
-    // Countdowns and "n분 전" move on their own between refreshes.
+    // Countdowns and the "ago" label move on their own between refreshes.
     cx.timer.every(30000, (cx) => cx.notify());
     // Every 30s (the user's pick): /usage takes ~4s and no tokens; the split reads only new lines.
     cx.timer.after(1000, (cx) => this.refreshPlan(cx));
@@ -134,7 +167,7 @@ export default class AiUsage extends View {
   }
 
   // props().demo: made-up limits frozen at `now`, for screenshots and a recipe's checks. Both
-  // "모델별" folds start open unless props().open says otherwise ({ claude: false }). Nothing
+  // "By model" folds start open unless props().open says otherwise ({ claude: false }). Nothing
   // is read, run or watched, and the layout's block isn't resized.
   demo(now) {
     const at = (sec) => new Date((now + sec) * 1000).toISOString();
@@ -221,6 +254,7 @@ export default class AiUsage extends View {
 
   render() {
     const t = theme();
+    const tx = TEXT[this.lang];
     const now = this.demoNow ?? Date.now() / 1000;
     const row = ({ label, lim }) => {
       const pct = lim?.pct ?? 0;
@@ -230,7 +264,7 @@ export default class AiUsage extends View {
         .child(div().flex_1().min_w(24).h(5).rounded(3).bg(t.raised).overflow_hidden()
           .child(div().h_full().rounded(3).bg(color).w(`${pct}%`)))
         .child(div().w(32).flex_none().text_color(color).child(lim ? `${pct}%` : "—"))
-        .child(div().w(60).flex_none().text_color(t.muted).child(lim?.left != null ? span(lim.left) : ""));
+        .child(div().w(60).flex_none().text_color(t.muted).child(lim?.left != null ? span(lim.left, tx) : ""));
     };
     const colorOf = (id) => MODEL_COLOR[/^claude-([a-z]+)/.exec(id)?.[1]] ?? t.ansi7 ?? t.muted;
     // Same columns as a limit row: the bar starts and ends where theirs do.
@@ -247,10 +281,10 @@ export default class AiUsage extends View {
     const sp = this.split;
     const splitView = sp?.seven.length
       ? v_flex().gap(4).mt(2)
-        .child(stack("토큰 비중 5시간", sp.five)).child(stack("토큰 비중 7일", sp.seven)).child(legend(sp.seven))
+        .child(stack(tx.share5, sp.five)).child(stack(tx.share7, sp.seven)).child(legend(sp.seven))
       : null;
 
-    // A section: its product and plan, the whole-plan rows, then "모델별" folding the per-model ones.
+    // A section: its product and plan, the whole-plan rows, then "By model" folding the per-model ones.
     const section = (name, product, plan, rows, modelRows, extra, empty) => {
       const at = this.savedAt[name];
       const age = at ? now - at : null;
@@ -261,7 +295,7 @@ export default class AiUsage extends View {
           .child(div().text_size(14).font_weight(600).text_color(t.foreground).child(product))
           .when(Boolean(plan), (el) => el.child(div().px(6).py(1).rounded(4).bg(t.raised).text_size(11).text_color(t.muted).child(plan)))
           .child(div().flex_1())
-          .child(div().text_size(11).text_color(t.muted).child(age == null ? "" : age < 90 ? "방금" : `${span(age)} 전`)))
+          .child(div().text_size(11).text_color(t.muted).child(age == null ? "" : age < 90 ? tx.justNow : tx.ago(span(age, tx)))))
         .when(!has, (el) => el.child(div().text_size(11).text_color(t.muted).child(empty)))
         .when(has, (el) => el.children(rows.map(row)))
         .when(has && (modelRows.length > 0 || Boolean(extra)), (el) => el
@@ -269,23 +303,23 @@ export default class AiUsage extends View {
             .text_size(11).text_color(t.muted).hover((s) => s.text_color(t.foreground))
             .on_click((_e, cx) => this.toggle(name, cx))
             .child(div().w(10).child(open ? "▾" : "▸"))
-            .child(div().child("모델별"))
+            .child(div().child(tx.byModel))
             .when(modelRows.length > 0, (el) => el.child(div().px(5).rounded(4).bg(t.raised).child(String(modelRows.length)))))
           .when(open, (el) => el.children(modelRows.map(row)).when(Boolean(extra), (el) => el.child(extra))));
     };
 
     const rl = this.data.claude?.rate_limits;
     const agy = this.data.agy;
-    const agyAll = agyRows(agy?.quota, now);
+    const agyAll = agyRows(agy?.quota, now, tx);
     const content = v_flex().id("usage-content").w_full().flex_none().px(12).py(12).gap(12).border_b(1).border_color(t.border)
       .on_size_change((size) => this.fit(size.height))
-      // Per-model limits (Fable 7일) are real limits: they sit with the plan's rows, not in the fold.
-      .child(section("claude", "Claude Code", this.claudePlan, [...claudeRows(rl, now), ...claudeModelRows(this.plan?.windows, now)], [], splitView,
-        "Claude Code를 한 번 실행하면 표시돼요"))
+      // Per-model limits (Fable 7d) are real limits: they sit with the plan's rows, not in the fold.
+      .child(section("claude", "Claude Code", this.claudePlan, [...claudeRows(rl, now, tx), ...claudeModelRows(this.plan?.windows, now, tx)], [], splitView,
+        tx.emptyClaude))
       .child(div().h(1).w_full().flex_none().bg(t.border))
       .child(section("agy", "Antigravity", agy?.plan_tier ?? null, // Gemini's rows (Argon's own limit too) on top; Claude·GPT, which agy runs on the side, in the fold.
         agyAll.filter((r) => r.group !== "3p"), agyAll.filter((r) => r.group === "3p"), null,
-        "agy에서 한 번 대화하면 표시돼요"));
+        tx.emptyAgy));
     // A demo can be given the width of the panel it is pictured as (props().width).
     return div().id("root").size_full().when(Boolean(this.demoNow && props().width), (el) => el.w(props().width))
       .bg(t.background).text_color(t.foreground).child(content);

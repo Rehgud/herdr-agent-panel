@@ -1,6 +1,98 @@
 // What the sessions panel computes, without Herdr or GPUI, so node can test it:
 // node lib.test.mjs
 
+// Every word the panel shows, per language; a number in a phrase makes it a function.
+export const TEXT = {
+  en: {
+    status: { working: "Working", blocked: "Needs you", done: "Done", idle: "Idle", none: "No status" },
+    task: { shell: "Shell", monitor: "Monitor", cron: "Scheduled", wakeup: "Scheduled" },
+    aboutEffort: "Reasoning effort: how much the model thinks before it answers. Higher is more thorough, but slower and uses more tokens.",
+    aboutUltra: "Claude Code's /effort ultracode mode. Every task runs a sub-agent workflow that cross-checks the work, so it is the most thorough mode and uses the most tokens.",
+    aboutContext: "How full the context window is. When it fills up, the conversation is compacted.",
+    aboutTasks: "Background work the agent started (shell commands, monitors) or scheduled. It keeps running while the agent is idle.",
+    aboutCache: "Time left on the prompt cache. Once it expires, the next message rereads the whole conversation and uses more tokens.",
+    effortTip: (effort, level) => `Reasoning effort ${effort} (${level}/5)`,
+    contextTip: (pct) => `Context ${pct}% used`,
+    legendTip: "Explains the effort, ULTRACODE and context indicators",
+    tabN: (n) => `Tab ${n}`,
+    doneN: (n) => `${n} done`,
+    moreN: (n) => `${n} more`,
+    justNow: "just now",
+    minutes: (n) => `${n}m`, hours: (n) => `${n}h`, days: (n) => `${n}d`,
+    agoOf: (span) => `${span} ago`,
+    runFor: (span) => span,
+    untilIn: (span) => `in ${span}`,
+    soon: "soon",
+    running: (n) => (n === 1 ? "1 task running" : `${n} tasks running`),
+    scheduledN: (n) => `${n} scheduled`,
+    failed: "Failed",
+    newSession: "New session",
+    modelUnknown: "Model unknown",
+    guessed: "Default",
+    guessedTip: "The default model from Codex's config.toml. It may differ if you changed the model in the session.",
+    hintOther: "This agent doesn't report its model",
+    hintFirst: "The model and context appear after the first reply",
+    replied: (ago) => `Replied ${ago}`,
+    cacheExpired: "Cache expired",
+    cacheSoon: "Cache expires soon",
+    cacheLeft: (span) => `Cache ${span}`,
+    cacheExample: "Cache 52m",
+    emptyTitle: "No agent sessions running",
+    emptyBody: "Start Claude Code, Antigravity or Codex in a terminal to see which model each session runs.",
+    current: "Current session",
+    guide: "Guide",
+    others: "Other sessions",
+    noneHere: "No agent sessions in this space",
+    noOthers: "No other sessions",
+    subagent: "Sub-agent",
+    demo: { review: "Cross-check the changes", expiry: "Look into session expiry", login: "Map the login flow", test: "Find why the test fails", deps: "Check dependency versions", train: "Train on the full dataset" },
+  },
+  ko: {
+    status: { working: "작업 중", blocked: "확인 필요", done: "완료", idle: "대기", none: "상태 없음" },
+    task: { shell: "셸 작업", monitor: "모니터", cron: "예약", wakeup: "예약" },
+    aboutEffort: "추론 강도(effort): 답하기 전에 생각하는 깊이. 높을수록 꼼꼼하지만 느리고 토큰을 더 써요.",
+    aboutUltra: "Claude Code의 /effort ultracode 모드. 작업마다 서브에이전트 워크플로로 교차 검증까지 해서, 가장 꼼꼼하고 토큰을 가장 많이 써요.",
+    aboutContext: "컨텍스트 창을 채운 정도. 가득 차면 대화가 압축돼요.",
+    aboutTasks: "에이전트가 띄워 둔 백그라운드 작업(셸 명령, 모니터)이나 예약이에요. 에이전트가 쉬는 중이어도 계속 돌아요.",
+    aboutCache: "프롬프트 캐시가 남은 시간. 지나면 다음 메시지가 대화 전체를 다시 읽어 토큰이 더 들어요.",
+    effortTip: (effort, level) => `추론 강도 ${effort} (${level}/5)`,
+    contextTip: (pct) => `컨텍스트 ${pct}% 사용`,
+    legendTip: "추론 강도·ULTRACODE·컨텍스트 표시가 무슨 뜻인지 보여 줘요",
+    tabN: (n) => `탭 ${n}`,
+    doneN: (n) => `완료 ${n}개`,
+    moreN: (n) => `그 밖에 ${n}개`,
+    justNow: "방금",
+    minutes: (n) => `${n}분`, hours: (n) => `${n}시간`, days: (n) => `${n}일`,
+    agoOf: (span) => `${span} 전`,
+    runFor: (span) => `${span}째`,
+    untilIn: (span) => `${span} 뒤`,
+    soon: "곧",
+    running: (n) => `작업 ${n}개 진행 중`,
+    scheduledN: (n) => `예약 ${n}개`,
+    failed: "실패",
+    newSession: "새 세션",
+    modelUnknown: "모델 확인 전",
+    guessed: "기본값",
+    guessedTip: "Codex 설정(config.toml)의 기본 모델이에요. 세션 안에서 바꿨다면 다를 수 있어요.",
+    hintOther: "이 에이전트는 모델 정보를 알려 주지 않아요",
+    hintFirst: "첫 응답이 오면 모델과 컨텍스트가 표시돼요",
+    replied: (ago) => `응답 ${ago}`,
+    cacheExpired: "캐시 만료",
+    cacheSoon: "캐시 곧 만료",
+    cacheLeft: (span) => `캐시 ${span}`,
+    cacheExample: "캐시 52분",
+    emptyTitle: "실행 중인 에이전트 세션이 없어요",
+    emptyBody: "터미널에서 Claude Code, Antigravity, Codex를 시작하면 어떤 모델로 돌고 있는지 여기에 표시돼요.",
+    current: "현재 세션",
+    guide: "안내",
+    others: "다른 세션",
+    noneHere: "이 스페이스에는 에이전트 세션이 없어요",
+    noOthers: "다른 세션이 없어요",
+    subagent: "서브에이전트",
+    demo: { review: "변경 사항 교차 검토", expiry: "세션 만료 처리 조사", login: "로그인 흐름 파악", test: "실패한 테스트 원인 찾기", deps: "의존성 버전 확인", train: "전체 데이터로 학습 실행" },
+  },
+};
+
 export const EFFORTS = ["low", "medium", "high", "xhigh", "max"];
 // 1..5 on the effort scale; 0 for none/minimal, null when it isn't one.
 export function effortLevel(e) {
@@ -15,15 +107,17 @@ export function modelName(id) {
   return m ? `${m[1][0].toUpperCase()}${m[1].slice(1)} ${m[2]}${m[3] ? `.${m[3]}` : ""}` : id;
 }
 
-// "방금", "3분", "2시간", "4일": how long `sec` seconds are.
-export function span(sec) {
+// "just now", "3m", "2h", "4d" (ko: "방금", "3분", "2시간", "4일"): how long `sec` seconds are.
+export function span(sec, tx) {
   const s = Math.max(0, Math.round(sec));
-  if (s < 60) return "방금";
-  if (s < 3600) return `${Math.floor(s / 60)}분`;
-  if (s < 86400) return `${Math.floor(s / 3600)}시간`;
-  return `${Math.floor(s / 86400)}일`;
+  if (s < 60) return tx.justNow;
+  if (s < 3600) return tx.minutes(Math.floor(s / 60));
+  if (s < 86400) return tx.hours(Math.floor(s / 3600));
+  return tx.days(Math.floor(s / 86400));
 }
-export const ago = (sec) => (sec < 60 ? "방금" : `${span(sec)} 전`);
+export const ago = (sec, tx) => (sec < 60 ? tx.justNow : tx.agoOf(span(sec, tx)));
+// How long something has run: "3h" (ko: "3시간째").
+export const elapsed = (sec, tx) => (sec < 60 ? tx.justNow : tx.runFor(span(sec, tx)));
 
 // POSIX `cksum` of a string's UTF-8 bytes: over9k names each transcript's subagent
 // cache by it (subagents.sh: subagents-$(printf '%s' "$1" | cksum)).
@@ -45,10 +139,10 @@ export function cksum(text) {
 
 // over9k's subagent lines (subagents.sh, agy-subagents.py), tab-separated: id, last write,
 // description, type, model, start, context tokens, effort, window, done. Newest first.
-export function parseSubs(text, { header = false } = {}) {
+export function parseSubs(text, { header = false, tx } = {}) {
   return (text ?? "").split("\n").slice(header ? 1 : 0).filter((l) => l.includes("\t")).map((l) => {
     const [id, at, desc, type, model, start, , effort, , done] = l.split("\t");
-    return { id, name: desc || type || "서브에이전트", type: type || null, model: modelName(model) || null,
+    return { id, name: desc || type || tx.subagent, type: type || null, model: modelName(model) || null,
       effort: effort || null, startedAt: Number(start) || null, lastAt: Number(at) || null, done: done === "1" };
   }).sort((a, b) => Number(a.done) - Number(b.done) || (b.lastAt ?? 0) - (a.lastAt ?? 0));
 }
@@ -67,20 +161,20 @@ export function parseTasks(text) {
 export const scheduled = (task) => task.kind === "cron" || task.kind === "wakeup";
 
 // A session's line on its background tasks: how many run now, else how many wait.
-export function taskBadge(tasks) {
+export function taskBadge(tasks, tx) {
   const all = tasks ?? [], running = all.filter((k) => !scheduled(k)).length;
-  return running ? `작업 ${running}개 진행 중` : all.length ? `예약 ${all.length}개` : null;
+  return running ? tx.running(running) : all.length ? tx.scheduledN(all.length) : null;
 }
 
-// Beside a task: how long it has run ("3시간째"), or how long until a wakeup ("12분 뒤"). A
+// Beside a task: how long it has run ("3h"), or how long until a wakeup ("in 12m"). A
 // cron job's schedule is words of its own ("Every 2 hours at :13"): the tooltip's.
-export function taskWhen(task, now) {
+export function taskWhen(task, now, tx) {
   if (task.kind === "wakeup") {
     const left = Number(task.when) ? Number(task.when) - now : null;
-    return left == null ? "" : left < 60 ? "곧" : `${span(left)} 뒤`;
+    return left == null ? "" : left < 60 ? tx.soon : tx.untilIn(span(left, tx));
   }
   if (scheduled(task) || !task.startedAt) return "";
-  return now - task.startedAt < 60 ? "방금" : `${span(now - task.startedAt)}째`;
+  return elapsed(now - task.startedAt, tx);
 }
 
 // clean() and codexTitle() are adapted from herdr-over9k's agent-name.js
@@ -188,7 +282,8 @@ export function folderName(cwd, homeDir) {
 // Made-up sessions for props().demo (screenshots, a recipe's checks), in the shapes the panel
 // reads: agents(), terminals(), tabs, focused(), and over9k's files per terminal (saved, subs,
 // tasks). Nobody's real folders, titles or numbers.
-export function demoData(now) {
+export function demoData(now, lang) {
+  const names = TEXT[lang].demo;
   const program = (key, name) => ({ key, name, icon: `icons/${key}.svg`, tint: false, agent: true });
   const claude = program("claude", "Claude Code"), codex = program("codex", "Codex"), agy = program("antigravity", "Antigravity");
   const agent = (address, name, prog, app, status, seq, title = "") =>
@@ -206,7 +301,7 @@ export function demoData(now) {
     terms: [
       ...list.map((a) => ({ address: a.address, state: "live", cwd: `/demo/${a.space_name}` })),
       // Started by my-app's agent with `hc run`: shown under it.
-      { address: "d5", parent: "d1", state: "live", status: "working", name: "변경 사항 교차 검토", program: agy, agent: "antigravity",
+      { address: "d5", parent: "d1", state: "live", status: "working", name: names.review, program: agy, agent: "antigravity",
         argv: ["agy", "-p", "review", "--model", "Gemini 4 Argon (Medium)"], created_ms: (now - 250) * 1000 },
     ],
     tabs: [{ id: "tab-d2", changed_at: (now - 12 * 60) * 1000 }],
@@ -216,12 +311,12 @@ export function demoData(now) {
       d4: { model: "Fable 5.2", effort: "high", ultracode: false, context: 63, lastAt: now - 25 * 60, cacheUntil: null },
     },
     subs: { d1: [
-      sub("a1", "세션 만료 처리 조사", "Opus 5.5", "xhigh", 95, 5, false),
-      sub("a2", "로그인 흐름 파악", "Haiku 5.5", "medium", 900, 780, true),
-      sub("a3", "실패한 테스트 원인 찾기", "Opus 5.5", "xhigh", 700, 520, true),
-      sub("a4", "의존성 버전 확인", "Haiku 5.5", "low", 400, 330, true),
+      sub("a1", names.expiry, "Opus 5.5", "xhigh", 95, 5, false),
+      sub("a2", names.login, "Haiku 5.5", "medium", 900, 780, true),
+      sub("a3", names.test, "Opus 5.5", "xhigh", 700, 520, true),
+      sub("a4", names.deps, "Haiku 5.5", "low", 400, 330, true),
     ] },
     // The agent of ml-train rests while what it started still runs.
-    tasks: { d4: [{ kind: "shell", id: "b1", name: "전체 데이터로 학습 실행", startedAt: now - 3 * 3600 - 300, when: null, output: "/tmp/demo/tasks/b1.out" }] },
+    tasks: { d4: [{ kind: "shell", id: "b1", name: names.train, startedAt: now - 3 * 3600 - 300, when: null, output: "/tmp/demo/tasks/b1.out" }] },
   };
 }
