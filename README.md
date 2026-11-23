@@ -4,7 +4,7 @@
 
 Mods for the Herdr desktop app that add **AI plan usage** and **each session's model** to the right-side panel, so you can see both at a glance. Built for people who use Claude Code and Antigravity (agy) side by side.
 
-> The panel's labels are in Korean (for example, "5시간" = 5 hours, "7일" = 7 days, "모델별" = by model, "작업 중" = working).
+> The panel uses English or Korean, following your macOS language settings: Korean if set as your first preferred language, English otherwise.
 
 ![The whole panel](docs/panel.png)
 
@@ -12,7 +12,7 @@ Mods for the Herdr desktop app that add **AI plan usage** and **each session's m
 
 | Mod | What it does |
 |---|---|
-| [`ai-usage`](ai-usage/) | Shows Claude Code's 5-hour and 7-day limits, its per-model weekly limits (such as Fable), and Antigravity's Gemini and Claude/GPT limits as bars. Expand "모델별" (by model) to see each Claude model's share of tokens. |
+| [`ai-usage`](ai-usage/) | Shows Claude Code's 5-hour and 7-day limits, its per-model weekly limits (such as Fable), and Antigravity's Gemini and Claude/GPT limits as bars. Expand "By model" to see each Claude model's share of tokens. |
 | [`sessions`](sessions/) | Shows the model, reasoning effort and context usage of the current session, then lists your other sessions and their running sub-agents as a tree. Commands still running in the background after the agent has replied (such as a training script) are shown too. |
 | [`tabs-flow`](tabs-flow/) | Adds a **Flow** button to Herdr's default tab bar and opens this panel automatically whenever you switch spaces. |
 
@@ -53,6 +53,8 @@ They are built to work together, but each one can be installed on its own.
    ```
 
    `"px": 330` is only the starting height; the `usage` block resizes itself to fit its content.
+
+   To choose the language yourself, add `"props": { "lang": "en" }` (or `"ko"`) next to `"mod"` in the `content` of the `usage` and `flow-main` blocks, as in `"content": { "mod": "ai-usage", "props": { "lang": "en" } }`.
 
 3. Set up the status line scripts that save usage to files. `ai-usage` reads these files.
 
@@ -101,7 +103,7 @@ You can change the intervals in the `cx.timer.every(...)` calls in each `main.js
 - **The token share is an estimate.** It counts tokens without cache reads, so it can differ from how fast each limit is actually used up.
 - **Antigravity's Claude and GPT models share a single limit.** agy counts both in a single `3p` bucket, so they can't be shown separately.
 - **A session's name is the folder it was started in.** The home folder shows as `~`; hover over the name to see the original session title.
-- **`sessions` depends on over9k.** Without it, the model shows as "모델 확인 전" (model not known yet).
+- **`sessions` depends on over9k.** Without it, the model appears as "Model unknown".
 - **Codex sessions** haven't been tested much in real-world use.
 
 ## License
