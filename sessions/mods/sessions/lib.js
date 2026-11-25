@@ -34,28 +34,29 @@ export const TEXT = {
     hintFirst: "The model and context appear after the first reply",
     replied: (ago) => `Replied ${ago}`,
     cacheExpired: "Cache expired",
-    cacheSoon: "Cache expires soon",
+    cacheSoon: "Cache expiring",
     cacheLeft: (span) => `Cache ${span}`,
     cacheExample: "Cache 52m",
     emptyTitle: "No agent sessions running",
     emptyBody: "Start Claude Code, Antigravity or Codex in a terminal to see which model each session runs.",
     current: "Current session",
-    guide: "Guide",
+    guide: "Legend",
     others: "Other sessions",
     all: "All sessions",
     list: "List",
     diagram: "Diagram",
-    thisComputer: "Local", // the diagram's 88px box: "This computer" doesn't fit
-    thisComputerTip: "This computer",
+    shapes: { ltr: "Columns", indent: "Indented", org: "Org chart" },
+    thisComputer: "This computer",
     sessionsN: (n) => (n === 1 ? "1 session" : `${n} sessions`),
     noneHere: "No agent sessions in this space",
     noOthers: "No other sessions",
     subagent: "Sub-agent",
-    demo: { review: "Cross-check the changes", expiry: "Look into session expiry", login: "Map the login flow", test: "Find why the test fails", deps: "Check dependency versions", train: "Train on the full dataset" },
+    demo: { review: "Cross-check the changes", expiry: "Look into session expiry", login: "Map the login flow", test: "Find why the test fails", deps: "Check dependency versions", train: "Train on the full dataset",
+      fix: "Fix logins that expire too early", rate: "Add rate limiting", docs: "Update the API docs", tune: "Tune the training run" },
   },
   ko: {
     status: { working: "작업 중", blocked: "확인 필요", done: "완료", idle: "대기", none: "상태 없음" },
-    task: { shell: "셸 작업", monitor: "모니터", cron: "예약", wakeup: "예약" },
+    task: { shell: "셸 작업", monitor: "모니터링", cron: "예약", wakeup: "예약" },
     aboutEffort: "추론 강도(effort): 답하기 전에 생각하는 깊이. 높을수록 꼼꼼하지만 느리고 토큰을 더 써요.",
     aboutUltra: "Claude Code의 /effort ultracode 모드. 작업마다 서브에이전트 워크플로로 교차 검증까지 해서, 가장 꼼꼼하고 토큰을 가장 많이 써요.",
     aboutContext: "컨텍스트 창을 채운 정도. 가득 차면 대화가 압축돼요.",
@@ -66,7 +67,7 @@ export const TEXT = {
     legendTip: "추론 강도·ULTRACODE·컨텍스트 표시가 무슨 뜻인지 보여 줘요",
     tabN: (n) => `탭 ${n}`,
     doneN: (n) => `완료 ${n}개`,
-    moreN: (n) => `그 밖에 ${n}개`,
+    moreN: (n) => `${n}개 더`,
     justNow: "방금",
     minutes: (n) => `${n}분`, hours: (n) => `${n}시간`, days: (n) => `${n}일`,
     agoOf: (span) => `${span} 전`,
@@ -90,18 +91,19 @@ export const TEXT = {
     emptyTitle: "실행 중인 에이전트 세션이 없어요",
     emptyBody: "터미널에서 Claude Code, Antigravity, Codex를 시작하면 어떤 모델로 돌고 있는지 여기에 표시돼요.",
     current: "현재 세션",
-    guide: "안내",
+    guide: "범례",
     others: "다른 세션",
-    all: "모든 세션",
+    all: "전체 세션",
     list: "List",
     diagram: "Diagram",
+    shapes: { ltr: "가로형", indent: "계단형", org: "조직도" },
     thisComputer: "이 컴퓨터",
-    thisComputerTip: "이 컴퓨터",
     sessionsN: (n) => `세션 ${n}개`,
     noneHere: "이 스페이스에는 에이전트 세션이 없어요",
     noOthers: "다른 세션이 없어요",
     subagent: "서브에이전트",
-    demo: { review: "변경 사항 교차 검토", expiry: "세션 만료 처리 조사", login: "로그인 흐름 파악", test: "실패한 테스트 원인 찾기", deps: "의존성 버전 확인", train: "전체 데이터로 학습 실행" },
+    demo: { review: "변경 사항 교차 검토", expiry: "세션 만료 처리 조사", login: "로그인 흐름 파악", test: "실패한 테스트 원인 찾기", deps: "의존성 버전 확인", train: "전체 데이터로 학습 실행",
+      fix: "로그인이 일찍 풀리는 문제 수정", rate: "요청 속도 제한 추가", docs: "API 문서 갱신", tune: "학습 설정 조정" },
   },
 };
 
@@ -169,6 +171,40 @@ export function parseTasks(text) {
   });
 }
 
+// One line of what an agent wrote: its first line with the Markdown marks taken off.
+export function oneLine(text) {
+  const line = String(text ?? "").split("\n").map((l) => l.trim()).find(Boolean) ?? "";
+  return line.replace(/^(#+|[-*>]|\d+\.)\s+/, "").replace(/\*\*|__|`/g, "").replace(/\s+/g, " ").slice(0, 200) || null;
+}
+
+// What a Claude Code session is doing now, from the end of its transcript (JSON lines, the first
+// one possibly cut): its latest step as it described it (a command's or sub-agent's
+// description, its open to-do, the first line of what it said), or the request it was just
+// given if it hasn't answered it yet.
+export function activity(text) {
+  const lines = String(text ?? "").split("\n").slice(1).reverse();
+  for (const l of lines) {
+    let e;
+    try { e = JSON.parse(l); } catch { continue; }
+    const content = e.message?.content;
+    if (e.type === "user" && !e.isMeta) {
+      const said = typeof content === "string" ? content : (content ?? []).find((b) => b.type === "text")?.text;
+      if (said && !/^\s*</.test(said)) return oneLine(said); // <command-name>, <local-command-...>: not a request
+      continue;
+    }
+    if (e.type !== "assistant" || !Array.isArray(content)) continue;
+    for (const b of [...content].reverse()) {
+      if (b.type === "tool_use") {
+        const todo = b.name === "TodoWrite" ? (b.input?.todos ?? []).find((t) => t.status === "in_progress") : null;
+        const step = todo?.activeForm ?? b.input?.description;
+        if (step) return oneLine(step);
+      }
+      if (b.type === "text" && b.text?.trim()) return oneLine(b.text);
+    }
+  }
+  return null;
+}
+
 // A cron job or a wakeup waits for its time; a shell or a monitor runs now.
 export const scheduled = (task) => task.kind === "cron" || task.kind === "wakeup";
 
@@ -229,6 +265,14 @@ export const kind = (a) => {
   const s = `${a?.app ?? ""} ${a?.program?.key ?? ""}`.toLowerCase();
   return /claude/.test(s) ? "claude" : /codex/.test(s) ? "codex" : /antigravity|\bagy\b/.test(s) ? "agy" : "other";
 };
+
+// A terminal still titled by the command that started it ("agy --dangerously-skip-permissions",
+// "/usr/local/bin/claude"): its agent hasn't titled the session yet.
+const COMMAND = { claude: "claude", codex: "codex", agy: "agy" };
+export function commandTitle(title, a) {
+  const first = String(title ?? "").trim().split(/\s+/)[0].split("/").pop().toLowerCase();
+  return Boolean(first) && (first === a?.program?.key || first === COMMAND[kind(a)]);
+}
 
 // One agent's details from what was read for it. `saved`: over9k's file for its terminal
 // (Claude Code's, or Antigravity's when its over9k status line is on); `agy`: agy-info.py's
@@ -300,6 +344,36 @@ export function placeTree(roots, under, apart = 0) {
   return { boxes, rows: row, depth: Math.max(0, ...boxes.map((b) => b.depth)) };
 }
 
+// The diagram drawn downward: each box under the one before it, `indent` px further in per
+// level, one more `gap` between siblings down to depth `apart` (the sessions). `height(x)`: a
+// box's height. Boxes get left, top and h; `height` is the whole drawing's.
+export function stackTree(roots, under, height, { indent = 24, gap = 6, apart = 1 } = {}) {
+  const boxes = [];
+  let y = 0;
+  const place = (x, depth, parent, i) => {
+    if (i && depth <= apart) y += gap;
+    const box = { x, depth, parent, left: depth * indent, top: y, h: height(x) };
+    boxes.push(box);
+    y += box.h + gap;
+    under(x).forEach((k, j) => place(k, depth + 1, box, j));
+  };
+  roots.forEach((r, i) => place(r, 0, null, i));
+  return { boxes, height: Math.max(0, y - gap) };
+}
+
+// The diagram as an org chart: a row per level, each leaf `slot` px across, a parent centred
+// over its children (placeTree's rows turned on their side). Boxes get left, top, w and h.
+export function orgTree(roots, under, height, { slot, vgap = 28, gap = 8 }) {
+  const { boxes, rows, depth } = placeTree(roots, under, 1);
+  const level = [];
+  for (const b of boxes) level[b.depth] = Math.max(level[b.depth] ?? 0, height(b.x));
+  const tops = [];
+  let y = 0;
+  for (let d = 0; d <= depth; d++) { tops[d] = y; y += (level[d] ?? 0) + vgap; }
+  for (const b of boxes) Object.assign(b, { left: b.row * slot + gap / 2, top: tops[b.depth], w: slot - gap, h: height(b.x) });
+  return { boxes, width: rows * slot, height: Math.max(0, y - vgap) };
+}
+
 // A session's name: the folder it was started in ("~" at home), as the user names sessions.
 export function folderName(cwd, homeDir) {
   const raw = String(cwd ?? "");
@@ -321,10 +395,12 @@ export function demoData(now, lang) {
   const sub = (id, name, model, effort, started, last, done) =>
     ({ id, name, type: "general-purpose", model, effort, startedAt: now - started, lastAt: now - last, done });
   const list = [
-    agent("d1", "my-app", claude, "claude-code", "working", 4),
-    agent("d2", "api-server", codex, "codex", "idle", 3, "Add rate limiting | gpt-6-luna medium | Context 18% used"),
+    // Each with the title its agent gave the session: Claude Code's terminal title (after its
+    // spinner), Codex's thread, agy's conversation (in `saved` below).
+    agent("d1", "my-app", claude, "claude-code", "working", 4, `✳ ${names.fix}`),
+    agent("d2", "api-server", codex, "codex", "idle", 3, `${names.rate} | gpt-6-luna medium | Context 18% used`),
     agent("d3", "docs-site", agy, "antigravity", "done", 2),
-    agent("d4", "ml-train", claude, "claude-code", "idle", 1),
+    agent("d4", "ml-train", claude, "claude-code", "idle", 1, `✳ ${names.tune}`),
   ];
   return {
     now, list, focus: { terminal: "d1" },
@@ -337,7 +413,7 @@ export function demoData(now, lang) {
     tabs: [{ id: "tab-d2", changed_at: (now - 12 * 60) * 1000 }],
     saved: {
       d1: { model: "Opus 5.5", effort: "xhigh", ultracode: false, context: 42, lastAt: now - 20, cacheUntil: now + 52 * 60 },
-      d3: { agent: "antigravity", model: "Gemini 3.8 Flash", effort: "low", context: 27, lastAt: now - 8 * 60 },
+      d3: { agent: "antigravity", model: "Gemini 3.8 Flash", effort: "low", context: 27, lastAt: now - 8 * 60, title: names.docs },
       d4: { model: "Fable 5.2", effort: "high", ultracode: false, context: 63, lastAt: now - 25 * 60, cacheUntil: null },
     },
     subs: { d1: [

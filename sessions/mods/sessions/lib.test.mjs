@@ -140,6 +140,45 @@ assert.deepEqual([demo.subs.d1.map((s) => s.name), demo.terms[4].name, demo.task
 assert.deepEqual([demoEn.subs.d1.map((s) => s.name), demoEn.terms[4].name, demoEn.tasks.d4[0].name],
   [["Look into session expiry", "Map the login flow", "Find why the test fails", "Check dependency versions"], "Cross-check the changes", "Train on the full dataset"]);
 assert.equal(L.taskBadge(demoEn.tasks.d4, en), "1 task running"); assert.equal(L.taskWhen(demoEn.tasks.d4[0], demoEn.now, en), "3h");
+// The downward diagram: one box under another, further in per level, sessions parted.
+{
+  const kids = { pc: ["s1", "s2"], s1: ["a", "b"] };
+  const { boxes, height } = L.stackTree(["pc"], (x) => kids[x] ?? [], (x) => (x[0] === "s" ? 60 : 38));
+  assert.deepEqual(boxes.map((b) => [b.x, b.left, b.top]), [["pc", 0, 0], ["s1", 24, 44], ["a", 48, 110], ["b", 48, 154], ["s2", 24, 204]]);
+  assert.equal(height, 264);
+  // The org chart: levels as rows, parents centred over their children.
+  const org = L.orgTree(["pc"], (x) => kids[x] ?? [], (x) => (x[0] === "s" ? 60 : 38), { slot: 100 });
+  const at = Object.fromEntries(org.boxes.map((b) => [b.x, [b.left, b.top]]));
+  assert.deepEqual(at, { pc: [154, 0], s1: [54, 66], a: [4, 154], b: [104, 154], s2: [254, 66] });
+  assert.deepEqual([org.width, org.height, org.boxes[0].w], [350, 192, 92]);
+}
+
+// What a Claude Code session is doing: its latest step, read from the end of the transcript.
+{
+  const j = (o) => JSON.stringify(o);
+  const said = (text) => j({ type: "assistant", message: { content: [{ type: "text", text }] } });
+  const tool = (name, input) => j({ type: "assistant", message: { content: [{ type: "tool_use", name, input }] } });
+  const result = j({ type: "user", message: { content: [{ type: "tool_result", content: "ok" }] } });
+  const ask = (text) => j({ type: "user", message: { content: text } });
+  const tail = (...entries) => ["{cut mid-line", ...entries].join("\n");
+  assert.equal(L.activity(tail(ask("fix it"), said("**Looking** at `main.js` first.\nmore"), tool("Read", { file_path: "x" }), result)), "Looking at main.js first.");
+  assert.equal(L.activity(tail(said("hi"), tool("Bash", { command: "ls", description: "List the files" }), result)), "List the files");
+  assert.equal(L.activity(tail(tool("TodoWrite", { todos: [{ status: "completed", activeForm: "A" }, { status: "in_progress", activeForm: "Moving the line" }] }))), "Moving the line");
+  // A new request it hasn't answered yet; a hook's note or a slash command is none.
+  assert.equal(L.activity(tail(said("done"), ask("## Now the docs"))), "Now the docs");
+  assert.equal(L.activity(tail(said("done"), j({ type: "user", isMeta: true, message: { content: "note" } }), ask("<command-name>/clear</command-name>"))), "done");
+  assert.equal(L.activity("only a cut line"), null);
+  assert.equal(L.oneLine("\n\n  - item one\nitem two"), "item one");
+}
+
+// A title that is still the command line is no session title.
+const agyA = { app: "antigravity", program: { key: "antigravity", name: "Antigravity" } };
+assert.deepEqual([L.commandTitle("agy --dangerously-skip-permissions", agyA), L.commandTitle("/opt/bin/claude", { app: "claude-code" }),
+  L.commandTitle("antigravity", agyA), L.commandTitle("Fix the login bug", agyA), L.commandTitle("", agyA)], [true, true, true, false, false]);
+
+// The demo's session titles, which the panel shows as each session's one-line summary.
+assert.deepEqual([L.clean(demo.list[0].title), L.details(demo.list[1]).title, L.details(demo.list[2], { saved: demo.saved.d3 }).title],
+  ["로그인이 일찍 풀리는 문제 수정", "요청 속도 제한 추가", "API 문서 갱신"]);
 const busy = (a) => (demo.tasks[a.address] ?? []).some((k) => !L.scheduled(k));
 assert.deepEqual(L.sortSessions(demo.list.slice(1), busy).map((a) => a.space_name), ["ml-train", "docs-site", "api-server"]);
 // The diagram: a leaf per row, a parent level with the middle of its children, half a row

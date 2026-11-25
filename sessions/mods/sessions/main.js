@@ -7,7 +7,7 @@
 import { View, div, image, svg, PathBuilder } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
 import { agents, terminals, spaces, panes, focused, layout, props, settings, theme, run, exec, home, appHome, readTextFile, checking } from "herdr";
-import { TEXT, EFFORTS, effortLevel, span, ago, elapsed, cksum, parseSubs, clean, codexDefaults, argvModel, kind, details, sortSessions, pickCurrent, foldSubs, folderName, parseTasks, scheduled, taskBadge, taskWhen, placeTree, demoData } from "./lib.js";
+import { TEXT, EFFORTS, effortLevel, span, ago, elapsed, cksum, parseSubs, clean, codexDefaults, argvModel, kind, details, sortSessions, pickCurrent, foldSubs, folderName, parseTasks, scheduled, taskBadge, taskWhen, placeTree, stackTree, orgTree, activity, commandTitle, demoData } from "./lib.js";
 
 const MOD = "sessions";
 const POLL_MS = 5000;
@@ -15,10 +15,13 @@ const GUT = 16;   // the icon column, and one tree level's guide
 const RAIL = 7;   // the guide line's x in it: under the icon's middle
 const SUB_H = 20; // a sub-agent's line
 const NODE_H = 38; // a box in the diagram
+const SESSION_H = 60; // a session's box: a third line for what it's doing (54 clips it)
 const ROW = 46;    // a diagram row: a box and the gap under it
 const GAP_X = 20;  // between the diagram's columns: room for the curves
-const ROOT_W = 88; // the diagram's machine box: room for "이 컴퓨터"
+const ROOT_W = { ko: 88, en: 124 }; // the columns layout's machine box: room for "이 컴퓨터", "This computer"
+const ORG_SLOT = 96; // an org chart's narrowest box (and its gap); past that it scrolls sideways
 const VIEWS = ["list", "diagram"];
+const SHAPES = ["indent", "ltr", "org"];
 const CHEVRON = (open) => `mods/workspace-chrome/chevron-${open ? "down" : "right"}.svg`;
 const pickLang = (v) => (v === "en" || v === "ko" ? v : null);
 // The mod runtime has no Intl or navigator, so macOS's first preferred language decides.
@@ -136,6 +139,7 @@ export default class Sessions extends View {
     this.codex = null; // Codex's configured model and effort
     this.subs = {};    // terminal -> its agent's own sub-agents
     this.tasks = {};   // terminal -> what its agent runs in the background, or has scheduled
+    this.doing = {};   // terminal -> what its Claude Code is doing now, one line
     this.open = new Set(); // sessions whose finished sub-agents show
     this.sweep = cx.new(Sweep);
     this.lang = pickLang(props()?.lang);
@@ -153,6 +157,10 @@ export default class Sessions extends View {
     // List or diagram, as last picked; props().view picks it for a demo.
     try { this.view = props()?.view ?? localStorage.getItem("view"); } catch { /* the list */ }
     if (!VIEWS.includes(this.view)) this.view = "list";
+    // The diagram's layout, as last picked: downward and indented unless chosen (it fits a
+    // narrow panel best), columns left to right, or an org chart.
+    try { this.shape = props()?.shape ?? localStorage.getItem("shape"); } catch { /* indented */ }
+    if (!SHAPES.includes(this.shape)) this.shape = "indent";
     this.width = (props()?.width ?? 368) - 24; // the diagram's, until it is laid out
     // props().demo: made-up sessions, frozen at their start (screenshots, a recipe's checks).
     // Nothing is read or run for them, and clicks go nowhere.
@@ -175,7 +183,7 @@ export default class Sessions extends View {
         // Agents, and the terminals agents started (`hc run`): this computer's only.
         const all = [...agents(), ...terminals().filter((k) => k.parent && k.state === "live").map((k) => ({ ...k, app: k.report?.app ?? k.agent, plain: !(k.report || k.program?.agent) }))];
         const local = [...new Map(all.filter((a) => !a.address.includes("/")).map((a) => [a.address, a])).values()];
-        const tx = TEXT[this.lang], saved = {}, subs = {}, tasks = {};
+        const tx = TEXT[this.lang], saved = {}, subs = {}, tasks = {}, doing = {};
         for (const a of local) {
           const i = json(await read(`${cache}/agents/${a.address}.json`));
           if (!i) continue;
@@ -188,6 +196,11 @@ export default class Sessions extends View {
           if (list.length) subs[a.address] = list;
           const bg = parseTasks(await read(`${cache}/tasks-${sum}`));
           if (bg.length) tasks[a.address] = bg;
+          // Its latest step, from the transcript's end; a tail that holds none (one huge tool
+          // output) keeps the last one.
+          const tail = (await exec("tail", ["-c", "262144", i.transcript], { timeout: 5000 }).catch(() => null))?.stdout;
+          const step = activity(tail) ?? this.doing[a.address];
+          if (step) doing[a.address] = step;
         }
         // Antigravity keeps nothing per terminal: over9k's script finds each agy's terminal
         // and conversation. Asked only while an agent that could be one is listed.
@@ -204,9 +217,9 @@ export default class Sessions extends View {
           if (list.length) subs[a.address] = list;
         }
         const codex = local.some((a) => kind(a) === "codex") ? codexDefaults(await read(`${home()}/.codex/config.toml`)) : null;
-        const raw = JSON.stringify([this.lang, saved, agy, latest?.conversation_id, latest?.context_window?.used_percentage, codex, subs, tasks]);
+        const raw = JSON.stringify([this.lang, saved, agy, latest?.conversation_id, latest?.context_window?.used_percentage, codex, subs, tasks, doing]);
         if (raw === this.raw) return;
-        Object.assign(this, { raw, saved, agy, latest, codex, subs, tasks });
+        Object.assign(this, { raw, saved, agy, latest, codex, subs, tasks, doing });
         cx.notify();
       } finally {
         this.busy = false;
@@ -261,17 +274,20 @@ export default class Sessions extends View {
     cx.notify();
   }
 
-  // A sub-agent's mark, and what stands beside its name: its model (else the program it is,
-  // unless that's already its name) and how long it has run, or since it ended.
-  subInfo(t, n, now) {
+  // A sub-agent's mark, and what stands beside its name: its model where it differs from its
+  // parent's (the same one goes without saying; the tooltip still has it), else the program it
+  // is (unless that's already its name), and how long it has run, or since it ended.
+  subInfo(t, n, now, parentModel) {
     const tx = TEXT[this.lang];
     const running = n.status === "working", failed = n.done && n.status === "blocked";
     const color = failed ? t.blocked : n.done ? t.dim : t[n.status] ?? t.dim;
     const dot = running ? div().size(6).rounded(3).bg(color).loop("opacity", { from: 0.35, to: 1, period: 1200 })
       : (n.done && !failed) || n.status === "idle" ? div().size(6).rounded(3).border(1).border_color(color) : div().size(6).rounded(3).bg(color);
-    const what = n.model ?? (n.type && n.program && n.type !== n.name ? n.type : null);
+    const model = n.model && n.model !== parentModel ? n.model : null;
+    const what = model ?? (n.type && n.program && n.type !== n.name ? n.type : null);
     const when = n.done ? (n.lastAt ? ago(now - n.lastAt, tx) : "") : n.startedAt ? elapsed(now - n.startedAt, tx) : "";
-    return { dot, failed, what, when };
+    const tip = [n.type, n.name, n.model].filter(Boolean).join(" · ");
+    return { dot, failed, model, what, when, tip };
   }
 
   // A sub-agent with a terminal of its own: to its pane if it was given one, else a peek at it.
@@ -280,7 +296,7 @@ export default class Sessions extends View {
   }
 
   // The lines under a session: running sub-agents, then the finished ones behind a fold.
-  subRows(t, nodes, owner, now, lead = []) {
+  subRows(t, nodes, owner, now, lead = [], parentModel = null) {
     const tx = TEXT[this.lang], open = this.open.has(owner);
     const items = this.under(nodes, owner);
     return items.flatMap((item, i) => {
@@ -304,18 +320,18 @@ export default class Sessions extends View {
           .when(Boolean(n.name), (el) => el.child(div().flex_none().text_size(10.5).text_color(t.muted).child(what)))
           .when(Boolean(when), (el) => el.child(div().flex_none().text_size(10.5).text_color(t.dim).child(when)))];
       }
-      const { dot, failed, what, when } = this.subInfo(t, n, now);
-      const row = line.id(`sub-${owner}-${n.id}`).gap(6).tooltip([n.type, n.name].filter(Boolean).join(" · "))
+      const { dot, failed, model, what, when, tip } = this.subInfo(t, n, now, parentModel);
+      const row = line.id(`sub-${owner}-${n.id}`).gap(6).tooltip(tip)
         .when(Boolean(n.terminal), (el) => el.cursor_pointer().rounded(5).hover((s) => s.bg(t.hover)).on_click(() => this.goSub(n)))
         .child(h_flex().w(8).ml(2).flex_none().justify_center().child(dot))
         .when(Boolean(n.program), (el) => el.child(icon(n.program, 12, n.done ? t.dim : t.foreground)))
         .child(div().flex_1().min_w(0).truncate().text_size(11.5).text_color(n.done ? t.dim : t.foreground).child(n.name))
         .when(failed, (el) => el.child(div().flex_none().text_size(10.5).text_color(t.blocked).child(tx.failed)))
         .when(Boolean(what), (el) => el.child(div().flex_none().max_w(120).truncate().text_size(10.5).text_color(n.done ? t.dim : t.muted).child(what)))
-        .when(Boolean(n.model), (el) => el.child(effortMark(t, tx, `sub-effort-${owner}-${n.id}`, n.effort, { h: 8, color: n.done ? t.dim : t.muted, word: false }) ?? div().w(18.5).flex_none()))
+        .when(Boolean(model), (el) => el.child(effortMark(t, tx, `sub-effort-${owner}-${n.id}`, n.effort, { h: 8, color: n.done ? t.dim : t.muted, word: false }) ?? div().w(18.5).flex_none()))
         .when(Boolean(n.ultracode), (el) => el.child(ultraBadge(t, tx, `sub-ultra-${owner}-${n.id}`)))
         .when(Boolean(when), (el) => el.child(div().flex_none().text_size(10.5).text_color(t.dim).child(when)));
-      return [row, ...this.subRows(t, n.children, n.id, now, [...lead, last ? "none" : "pipe"])];
+      return [row, ...this.subRows(t, n.children, n.id, now, [...lead, last ? "none" : "pipe"], n.model ?? parentModel)];
     });
   }
 
@@ -326,18 +342,23 @@ export default class Sessions extends View {
   naming(a, d, terms) {
     const tx = TEXT[this.lang];
     const live = d.title || clean(a.title);
-    const named = live && live !== a.program?.name && live.toLowerCase() !== a.program?.key && live !== a.address;
+    const named = live && live !== a.program?.name && !commandTitle(live, a) && live !== a.address;
     const folder = folderName(terms.find((k) => k.address === a.address)?.cwd, home());
     const name = folder ?? (named ? live : tx.newSession);
     const tip = `${name}${folder && named ? ` · ${live}` : ""}\n${[a.program?.name, a.space_name, tabLabel(a, tx), a.address].filter(Boolean).join(" · ")}`;
-    return { named, folder, name, tip };
+    // What it's doing now, as its last line: Claude Code's latest step, else the title the agent
+    // gave its session (Codex's thread, agy's conversation).
+    const summary = this.doing[a.address] ?? (folder && named ? live : null);
+    return { named, folder, name, tip, summary };
   }
 
   session(t, a, terms, tabs, now, hero = false) {
     const tx = TEXT[this.lang];
     const d = this.facts(a);
     const nodes = this.tree(a.address, terms);
-    const { named, folder, name, tip } = this.naming(a, d, terms);
+    const { named, folder, name, tip, summary } = this.naming(a, d, terms);
+    const about = (size) => div().id(`${hero ? "hero" : `s-${a.address}`}-summary`).h(16).min_w(0).truncate()
+      .text_size(size).text_color(t.muted).child(summary).tooltip(summary);
     const quiet = a.status === "idle" || !a.status;
     const tab = tabs.get(a.tab);
     const at = d.lastAt ?? (tab?.changed_at ? tab.changed_at / 1000 : null);
@@ -374,7 +395,8 @@ export default class Sessions extends View {
           .when(Boolean(hint), (el) => el.child(dot()).child(div().flex_none().text_color(t.dim).child(hint)))
           .when(d.lastAt != null, (el) => el.child(dot()).child(div().flex_none().child(tx.replied(ago(now - d.lastAt, tx)))))
           .when(left != null, (el) => el.child(dot()).child(div().id("hero-cache").flex_none().tooltip(tx.aboutCache)
-            .text_color(left <= 0 ? t.blocked : t.muted).child(left <= 0 ? tx.cacheExpired : left < 60 ? tx.cacheSoon : tx.cacheLeft(span(left, tx))))));
+            .text_color(left <= 0 ? t.blocked : t.muted).child(left <= 0 ? tx.cacheExpired : left < 60 ? tx.cacheSoon : tx.cacheLeft(span(left, tx))))))
+        .when(Boolean(summary), (el) => el.child(about(11.5)));
     } else {
       lines = v_flex().flex_1().min_w(0).gap(1).overflow_hidden()
         .child(tasks(h_flex().h(18).gap(8).items_center()
@@ -385,7 +407,8 @@ export default class Sessions extends View {
         .child(marks(h_flex().h(16).gap(8).items_center().text_size(11).text_color(t.muted)
           .child(model.flex_none().max_w(150).font_medium()))
           .when(d.context != null, (el) => el.child(contextMeter(t, tx, `${id}-context`, d.context, 20)))
-          .child(div().flex_1().min_w(0).truncate().text_right().text_color(t.dim).child(a.space_name && a.space_name !== folder ? a.space_name : "")));
+          .child(div().flex_1().min_w(0).truncate().text_right().text_color(t.dim).child(a.space_name && a.space_name !== folder ? a.space_name : "")))
+        .when(Boolean(summary), (el) => el.child(about(11)));
     }
 
     return v_flex().flex_none()
@@ -398,13 +421,13 @@ export default class Sessions extends View {
           .child(h_flex().h(18).justify_center().child(icon(a.program, hero ? 16 : 14, t.foreground)))
           .when(nodes.length > 0, (el) => el.child(div().absolute().left(RAIL).top(21).bottom(hero ? -2 : -4).w(1).bg(t.input ?? t.border))))
         .child(lines))
-      .children(this.subRows(t, nodes, a.address, now));
+      .children(this.subRows(t, nodes, a.address, now, [], d.model));
   }
 
-  // The machine as a box on the left, its sessions in the next column, what each started and
-  // its sub-agents further right, each joined to its parent by a curve: the current session
-  // framed in the accent color, a line to something running drawn in the working color with a
-  // pulse where it arrives.
+  // Every session as a box joined by curves to what it started, under a box for its machine:
+  // the current session framed in the accent color, a line to something running drawn in the
+  // working color with a pulse where it arrives. Three ways to lay it out (this.shape):
+  // "ltr" columns left to right, "indent" downward one step in per level, "org" an org chart.
   diagram(t, sessions, terms, now, current) {
     const tx = TEXT[this.lang];
     // One root per machine: a remote session's address starts with its machine's name.
@@ -414,38 +437,76 @@ export default class Sessions extends View {
       if (!machines.has(on)) machines.set(on, { machine: on, sessions: [] });
       machines.get(on).sessions.push({ a, nodes: this.tree(a.address, terms) });
     }
+    const roots = [...machines.values()];
     const under = (x) => (x.sessions ?? (x.a ? this.under(x.nodes, x.a.address) : x.n ? this.under(x.n.children, x.n.id) : []));
-    const { boxes, rows, depth: deepest } = placeTree([...machines.values()], under, 1);
-    // The machine's column is narrow (its box says little); the others share what's left.
-    const depth = Math.max(1, deepest);
-    const w = Math.max(60, Math.floor((this.width - ROOT_W - GAP_X * depth) / depth));
-    const width = (b) => (b.depth ? w : ROOT_W);
-    const left = (b) => (b.depth ? ROOT_W + GAP_X + (b.depth - 1) * (w + GAP_X) : 0), mid = (b) => b.row * ROW + NODE_H / 2;
+    // Each session's facts once: whether it has a line on what it's doing sets its box's height.
+    const info = new Map(sessions.map((a) => { const d = this.facts(a); return [a, { d, ...this.naming(a, d, terms) }]; }));
+    const pill = (x) => Boolean(x.fold || x.more);
+    const height = (x) => (x.fold ? 22 : x.more ? 18 : x.a && info.get(x.a).summary ? SESSION_H : NODE_H);
+    const W = this.width;
+    let shape = this.shape, layout;
+    if (shape === "indent") {
+      layout = stackTree(roots, under, height);
+      for (const b of layout.boxes) b.w = pill(b.x) ? null : W - b.left;
+    } else if (shape === "org") {
+      layout = orgTree(roots, under, height, { slot: Math.max(ORG_SLOT, W / Math.max(1, placeTree(roots, under, 1).rows)) });
+    } else {
+      shape = "ltr";
+      const { boxes, rows, depth: deepest } = placeTree(roots, under, 1);
+      // The machine's column is narrow (its box says little); the others share what's left.
+      const rootW = ROOT_W[this.lang], depth = Math.max(1, deepest), w = Math.max(60, Math.floor((W - rootW - GAP_X * depth) / depth));
+      // A session's box is taller than a row: the drawing moves down by what that adds above.
+      const pad = (SESSION_H - NODE_H) / 2;
+      for (const b of boxes) Object.assign(b, { h: height(b.x), w: pill(b.x) ? null : b.depth ? w : rootW,
+        left: b.depth ? rootW + GAP_X + (b.depth - 1) * (w + GAP_X) : 0 });
+      for (const b of boxes) b.top = pad + b.row * ROW + NODE_H / 2 - b.h / 2;
+      layout = { boxes, height: 2 * pad + Math.max(NODE_H, rows * ROW - (ROW - NODE_H)) };
+    }
+    const { boxes } = layout;
     const runs = (b) => b.x.a?.status === "working" || b.x.n?.status === "working" || (b.x.n?.task && !scheduled(b.x.n));
-    const frame = (b, id, border) => v_flex().id(id).absolute().left(left(b)).top(b.row * ROW).w(width(b)).h(NODE_H).px(8).gap(2).justify_center()
+    const mid = (b) => b.top + b.h / 2;
+    // The model a box runs, or the nearest one above it that says: a child shows its own only if different.
+    const modelOf = (b) => (!b ? null : b.x.a ? info.get(b.x.a).d.model : b.x.n?.model ?? modelOf(b.parent));
+    // Where a line arrives at a box, and where it leaves its parent.
+    const into = (b) => (shape === "org" ? [b.left + b.w / 2, b.top] : [b.left, mid(b)]);
+    const frame = (b, id, border) => v_flex().id(id).absolute().left(b.left).top(b.top).w(b.w).h(b.h).px(8).gap(2).justify_center()
       .rounded(6).bg(t.background).border(1).border_color(border).overflow_hidden();
     const second = (...parts) => div().min_w(0).truncate().text_size(10.5).text_color(t.muted).child(parts.filter(Boolean).join(" · "));
 
-    // The curves, one path per color.
-    const strokes = new Map();
+    // The curves, one path per color, the running ones drawn last so they show over the rest.
+    const line = t.input ?? t.border, strokes = new Map([[line, null], [t.working, null]]);
     for (const b of boxes.filter((b) => b.parent)) {
-      const color = runs(b) ? t.working : t.input ?? t.border;
-      const x1 = left(b.parent) + width(b.parent), y1 = mid(b.parent), x2 = left(b), y2 = mid(b);
-      strokes.set(color, (strokes.get(color) ?? PathBuilder.stroke(1)).move_to(x1, y1).cubic_bezier_to(x2, y2, x1 + GAP_X / 2, y1, x2 - GAP_X / 2, y2));
+      const p = b.parent, color = runs(b) ? t.working : line, [x2, y2] = into(b);
+      let path = strokes.get(color) ?? PathBuilder.stroke(1);
+      if (shape === "indent") {
+        // Down the parent's rail, under its icon, then a rounded turn into the box.
+        const rail = p.left + 14;
+        path = path.move_to(rail, p.top + p.h).line_to(rail, y2 - 6).curve_to(rail + 6, y2, rail, y2).line_to(x2, y2);
+      } else if (shape === "org") {
+        const x1 = p.left + p.w / 2, y1 = p.top + p.h, dy = (y2 - y1) / 2;
+        path = path.move_to(x1, y1).cubic_bezier_to(x2, y2, x1, y1 + dy, x2, y2 - dy);
+      } else {
+        const x1 = p.left + p.w, y1 = mid(p);
+        path = path.move_to(x1, y1).cubic_bezier_to(x2, y2, x1 + GAP_X / 2, y1, x2 - GAP_X / 2, y2);
+      }
+      strokes.set(color, path);
     }
-    const pulses = boxes.filter((b) => b.parent && runs(b)).map((b) =>
-      div().absolute().left(left(b) - 3).top(mid(b) - 3).size(6).rounded(3).bg(t.working).loop("opacity", { from: 0.25, to: 1, period: 1200 }));
+    const pulses = boxes.filter((b) => b.parent && runs(b)).map((b) => {
+      const [x, y] = into(b);
+      return div().absolute().left(x - 3).top(y - 3).size(6).rounded(3).bg(t.working).loop("opacity", { from: 0.25, to: 1, period: 1200 });
+    });
 
     const nodes = boxes.map((b) => {
       const { machine, a, n, fold, owner, more } = b.x;
-      if (b.x.sessions) return frame(b, `d-machine-${machine}`, t.input ?? t.border).bg(t.raised)
-        .tooltip(machine || tx.thisComputerTip)
+      if (b.x.sessions) return frame(b, `d-machine-${machine}`, line).bg(t.raised)
+        .tooltip(machine || tx.thisComputer)
         .child(h_flex().gap(5).items_center()
           .child(svg(`mods/workspace-chrome/${machine ? "server" : "monitor"}.svg`).size(12).flex_none().text_color(t.muted))
           .child(div().flex_1().min_w(0).truncate().text_size(12).font_medium().child(machine || tx.thisComputer)))
         .child(second(tx.sessionsN(b.x.sessions.length)));
       if (a) {
-        const d = this.facts(a), { folder, named, name, tip } = this.naming(a, d, terms);
+        const { d, folder, named, name, tip: about, summary } = info.get(a);
+        const tip = summary ? `${about}\n${summary}` : about; // the whole line, which the box may cut short
         const quiet = a.status === "idle" || !a.status;
         const border = a === current ? t.accent : a.status === "blocked" ? t.blocked : a.status === "working" ? t.working : t.border;
         return frame(b, `d-${a.address}`, border).when(a === current, (el) => el.border(1.5)).cursor_pointer().hover((s) => s.bg(t.hover))
@@ -458,13 +519,16 @@ export default class Sessions extends View {
             .child(div().min_w(0).truncate().text_color(d.model ? t.muted : t.dim).child(d.model ?? tx.modelUnknown))
             .when(effortLevel(d.effort) != null, (el) => el.child(effortMark(t, tx, `d-${a.address}-effort`, d.effort, { h: 8, color: t.muted, word: false })))
             // Narrow boxes keep the model's name over the context meter.
-            .when(d.context != null && w >= 150, (el) => el.child(div().flex_1()).child(contextMeter(t, tx, `d-${a.address}-context`, d.context, 16))));
+            .when(d.context != null && b.w >= 150, (el) => el.child(div().flex_1()).child(contextMeter(t, tx, `d-${a.address}-context`, d.context, 16))))
+          .when(Boolean(summary), (el) => el.child(div().min_w(0).truncate().text_size(10.5).text_color(t.foreground).child(summary)));
       }
-      if (fold) return h_flex().id(`d-fold-${owner}`).absolute().left(left(b)).top(mid(b) - 11).h(22).px(8).gap(4).items_center()
+      // A fold and a "more" sit at their box's middle, as wide as their words unless the layout says.
+      if (fold) return h_flex().id(`d-fold-${owner}`).absolute().left(b.left).top(mid(b) - 11).h(22).px(8).gap(4).items_center()
+        .when(Boolean(b.w), (el) => el.w(b.w).justify_center())
         .rounded(11).border(1).border_color(t.border).bg(t.background).cursor_pointer().text_size(11).text_color(t.dim)
         .hover((s) => s.text_color(t.foreground)).on_click((_e, cx) => this.toggleFold(owner, cx))
         .child(svg(CHEVRON(this.open.has(owner))).size(10).flex_none()).child(tx.doneN(fold));
-      if (more) return div().absolute().left(left(b) + 8).top(mid(b) - 8).text_size(11).text_color(t.dim).child(tx.moreN(more));
+      if (more) return div().absolute().left(b.left + 8).top(mid(b) - 8).text_size(11).text_color(t.dim).child(tx.moreN(more));
       if (n.task) {
         const waits = scheduled(n), what = tx.task[n.kind] ?? n.kind;
         return frame(b, `d-task-${n.id}`, waits ? t.border : alpha(t.working, "80"))
@@ -474,9 +538,9 @@ export default class Sessions extends View {
             .child(div().flex_1().min_w(0).truncate().text_size(11.5).child(n.name ?? what)))
           .child(second(n.name ? what : null, taskWhen(n, now, tx)));
       }
-      const { dot, failed, what, when } = this.subInfo(t, n, now);
+      const { dot, failed, what, when, tip } = this.subInfo(t, n, now, modelOf(b.parent));
       return frame(b, `d-sub-${n.id}`, failed ? t.blocked : n.status === "working" ? alpha(t.working, "80") : t.border)
-        .tooltip([n.type, n.name].filter(Boolean).join(" · "))
+        .tooltip(tip)
         .when(Boolean(n.terminal), (el) => el.cursor_pointer().hover((s) => s.bg(t.hover)).on_click(() => this.goSub(n)))
         .child(h_flex().gap(5).items_center()
           .child(h_flex().w(6).flex_none().justify_center().child(dot))
@@ -486,27 +550,34 @@ export default class Sessions extends View {
     });
 
     const paint = ([color, path]) => window.paint_path(path.build(), color).absolute().top(0).left(0).size_full();
-    return div().id("diagram").relative().mx(6).mt(4).flex_none().h(Math.max(NODE_H, rows * ROW - (ROW - NODE_H)))
+    // An org chart wider than the panel scrolls sideways inside it.
+    const drawing = div().relative().flex_none().w(Math.max(W, layout.width ?? W)).h(layout.height)
+      .children([...strokes].filter(([, path]) => path).map(paint)).children(pulses).children(nodes);
+    return div().id("diagram").mx(6).mt(4).flex_none().overflow_x_scroll()
       .on_size_change((size, cx) => {
         const width = size.width / (settings().zoom || 1);
         if (Math.abs(width - this.width) >= 1) { this.width = width; cx.notify(); }
       })
-      .children([...strokes].map(paint)).children(pulses).children(nodes);
+      .child(drawing);
   }
 
   // List or diagram: two buttons side by side, the shown one raised.
-  viewToggle(t) {
-    const tx = TEXT[this.lang];
-    const button = (view) => div().id(`view-${view}`).h(18).px(7).flex().items_center().rounded(4).cursor_pointer().text_size(11)
-      .text_color(this.view === view ? t.foreground : t.muted).when(this.view === view, (el) => el.bg(t.background))
+  // Buttons side by side, the chosen one raised; a pick is remembered under `key`.
+  toggle(t, key, options) {
+    const button = ([value, label]) => div().id(`${key}-${value}`).h(18).px(7).flex().items_center().rounded(4).cursor_pointer().text_size(11)
+      .text_color(this[key] === value ? t.foreground : t.muted).when(this[key] === value, (el) => el.bg(t.background))
       .hover((s) => s.text_color(t.foreground))
       .on_click((_e, cx) => {
-        this.view = view;
-        try { localStorage.setItem("view", view); } catch { /* not remembered */ }
+        this[key] = value;
+        try { localStorage.setItem(key, value); } catch { /* not remembered */ }
         cx.notify();
       })
-      .child(tx[view]);
-    return h_flex().flex_none().p(2).gap(2).rounded(6).bg(t.raised).children(VIEWS.map(button));
+      .child(label);
+    return h_flex().flex_none().p(2).gap(2).rounded(6).bg(t.raised).children(options.map(button));
+  }
+
+  viewToggle(t) {
+    return this.toggle(t, "view", VIEWS.map((v) => [v, TEXT[this.lang][v]]));
   }
 
   legendBox(t) {
@@ -563,7 +634,9 @@ export default class Sessions extends View {
           })
           .child(tx.guide).child(svg(CHEVRON(this.legend)).size(10).flex_none())))
       .when(this.legend, (el) => el.child(this.legendBox(t)))
-      .when(diagram, (el) => el.child(this.diagram(t, [current, ...others].filter(Boolean), terms, now, current)))
+      // Which layout: its own row, only in the diagram.
+      .when(diagram, (el) => el.child(h_flex().px(6).mb(6).child(this.toggle(t, "shape", SHAPES.map((s) => [s, tx.shapes[s]]))))
+        .child(this.diagram(t, [current, ...others].filter(Boolean), terms, now, current)))
       .when(!diagram, (el) => el
       // The line under the title runs while the current session works.
       .child(div().relative().h(2).mx(6).mb(6).flex_none().rounded(1).overflow_hidden().when(working, (el) => el.bg(alpha(t.working, "24"))

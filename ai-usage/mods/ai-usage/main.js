@@ -6,6 +6,7 @@
 import { View, div, svg } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
 import { home, appHome, readTextFile, watchFolder, exec, theme, checking, layout, settings, run, props } from "herdr";
+import { planLimits, agyUsage } from "./limits.js";
 
 const SOURCES = {
   claude: { dir: ".claude/state", file: "statusline-latest.json" },
@@ -166,6 +167,9 @@ export default class AiUsage extends View {
     cx.timer.every(30000, (cx) => this.refreshPlan(cx));
     cx.timer.after(2000, (cx) => this.refreshSplit(cx));
     cx.timer.every(30000, (cx) => this.refreshSplit(cx));
+    // agy's own /usage (no model call, ~6s) each minute, so its bars move without agy open.
+    cx.timer.after(3000, (cx) => this.refreshAgy(cx));
+    cx.timer.every(60000, (cx) => this.refreshAgy(cx));
   }
 
   // props().demo: made-up limits frozen at `now`, for screenshots and a recipe's checks. Both
@@ -206,8 +210,35 @@ export default class AiUsage extends View {
     });
   }
 
+  // Run from home, a folder agy trusts (elsewhere it may stop to ask); its log goes nowhere, or
+  // each run would leave a file in ~/.gemini/antigravity-cli/log.
+  refreshAgy(cx) {
+    if (this.agyBusy) return;
+    this.agyBusy = true;
+    cx.spawn(async (cx) => {
+      const r = await exec("agy", ["-p", "/usage", "--log-file", "/dev/null"], { cwd: home(), timeout: 30000 }).catch(() => null);
+      this.agyBusy = false;
+      const quota = agyUsage(r?.stdout);
+      if (quota) { this.agyPoll = { at: Math.floor(Date.now() / 1000), quota }; cx.notify(); }
+    });
+  }
+
+  // Antigravity's buckets and when they were read: agy's /usage or its status line's, whichever is newer.
+  agyQuota() {
+    const poll = this.agyPoll, line = this.data.agy?.quota;
+    const fresh = poll && (!line || poll.at >= (this.savedAt.agy ?? 0));
+    return fresh ? { quota: poll.quota, at: poll.at } : { quota: line ?? null, at: this.savedAt.agy };
+  }
+
+  // Claude's limits and when they were read: /usage's or the status line's, whichever is newer.
+  claudeLimits() {
+    const plan = planLimits(this.plan?.windows), line = this.data.claude?.rate_limits;
+    const fresh = plan && (!line || (this.plan.at ?? 0) >= (this.savedAt.claude ?? 0));
+    return fresh ? { rl: plan, at: this.plan.at } : { rl: line ?? null, at: this.savedAt.claude };
+  }
+
   refreshSplit(cx) {
-    const rl = this.data.claude?.rate_limits;
+    const { rl } = this.claudeLimits();
     const five = rl?.five_hour?.resets_at ? rl.five_hour.resets_at - 5 * 3600 : null;
     const seven = rl?.seven_day?.resets_at ? rl.seven_day.resets_at - 7 * 86400 : null;
     if (!five || !seven || this.splitting) return;
@@ -288,13 +319,15 @@ export default class AiUsage extends View {
         .child(stack(tx.share5, sp.five)).child(stack(tx.share7, sp.seven)).child(legend(sp.seven))
       : null;
 
+    const claude = this.claudeLimits(), agyNow = this.agyQuota();
     // A section: its product and plan, the whole-plan rows, then "By model" folding the per-model ones.
     const section = (name, product, plan, rows, modelRows, extra, empty) => {
-      const at = this.savedAt[name];
+      const at = name === "claude" ? claude.at : agyNow.at;
       const age = at ? now - at : null;
       const open = this.open[name];
       const shut = this.hidden[name];
-      const has = Boolean(this.data[name]) && !shut;
+      const known = name === "claude" ? Boolean(claude.rl) : Boolean(agyNow.quota);
+      const has = known && !shut;
       return v_flex().gap(4).flex_none()
         // The title line folds the whole section away, giving its room to the panel below.
         .child(h_flex().id(`head-${name}`).items_center().gap(8).when(!shut, (el) => el.mb(4)).cursor_pointer()
@@ -304,7 +337,7 @@ export default class AiUsage extends View {
           .when(Boolean(plan), (el) => el.child(div().px(6).py(1).rounded(4).bg(t.raised).text_size(11).text_color(t.muted).child(plan)))
           .child(div().flex_1())
           .child(div().text_size(11).text_color(t.muted).child(age == null ? "" : age < 90 ? tx.justNow : tx.ago(span(age, tx)))))
-        .when(!this.data[name] && !shut, (el) => el.child(div().text_size(11).text_color(t.muted).child(empty)))
+        .when(!known && !shut, (el) => el.child(div().text_size(11).text_color(t.muted).child(empty)))
         .when(has, (el) => el.children(rows.map(row)))
         .when(has && (modelRows.length > 0 || Boolean(extra)), (el) => el
           .child(h_flex().id(`fold-${name}`).h(20).mt(2).gap(6).items_center().rounded(4).cursor_pointer()
@@ -316,13 +349,12 @@ export default class AiUsage extends View {
           .when(open, (el) => el.children(modelRows.map(row)).when(Boolean(extra), (el) => el.child(extra))));
     };
 
-    const rl = this.data.claude?.rate_limits;
     const agy = this.data.agy;
-    const agyAll = agyRows(agy?.quota, now, tx);
+    const agyAll = agyRows(agyNow.quota, now, tx);
     const content = v_flex().id("usage-content").w_full().flex_none().px(12).py(12).gap(12).border_b(1).border_color(t.border)
       .on_size_change((size) => this.fit(size.height))
       // Per-model limits (Fable 7d) are real limits: they sit with the plan's rows, not in the fold.
-      .child(section("claude", "Claude Code", this.claudePlan, [...claudeRows(rl, now, tx), ...claudeModelRows(this.plan?.windows, now, tx)], [], splitView,
+      .child(section("claude", "Claude Code", this.claudePlan, [...claudeRows(claude.rl, now, tx), ...claudeModelRows(this.plan?.windows, now, tx)], [], splitView,
         tx.emptyClaude))
       .child(div().h(1).w_full().flex_none().bg(t.border))
       .child(section("agy", "Antigravity", agy?.plan_tier ?? null, // Gemini's rows (Argon's own limit too) on top; Claude·GPT, which agy runs on the side, in the fold.
