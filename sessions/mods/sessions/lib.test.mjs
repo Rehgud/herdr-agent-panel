@@ -153,6 +153,31 @@ assert.equal(L.taskBadge(demoEn.tasks.d4, en), "1 task running"); assert.equal(L
   assert.deepEqual([org.width, org.height, org.boxes[0].w], [350, 192, 92]);
 }
 
+// A ball's way along a line: the curve's own points, then even steps along them.
+{
+  const curve = L.bezierPoints([[0, 0], [0, 10], [10, 10], [10, 20]], 4);
+  assert.deepEqual([curve[0], curve[2], curve[4]], [[0, 0], [5, 10], [10, 20]]);
+  assert.deepEqual(L.bezierPoints([[0, 0], [10, 0], [10, 10]], 2)[1], [7.5, 2.5]); // a quadratic's middle
+  const steps = L.resample([[0, 0], [0, 10], [10, 10]], 5);
+  assert.deepEqual(steps.map((p) => [p.x, p.y, p.s]), [[0, 0, 0], [0, 5, 5], [0, 10, 10], [5, 10, 15], [10, 10, 20]]);
+  assert.deepEqual(L.resample([[3, 3], [3, 3]]).length, 1);
+}
+
+// Who just spoke: a child starting (new, or a new turn) is the parent speaking; stopping, or
+// vanishing mid-work, is the child replying. Old work seen for the first time is neither.
+{
+  const prev = new Map([["s>a", "working"], ["s>b", "idle"], ["s>c", "working"], ["s>d", "done"]]);
+  const { events, gone } = L.talkEvents(prev, [
+    { key: "s>a", status: "done" },                    // finished: reply
+    { key: "s>b", status: "working" },                 // a new turn: send
+    { key: "s>n", status: "working", startedAt: 995 }, // just started: send
+    { key: "s>o", status: "working", startedAt: 100 }, // long running, first seen: nothing
+    { key: "s>d", status: "done" },                    // no change
+  ], 1000);
+  assert.deepEqual(events, [{ key: "s>a", dir: "reply" }, { key: "s>b", dir: "send" }, { key: "s>n", dir: "send" }, { key: "s>c", dir: "reply" }]);
+  assert.deepEqual(gone, ["s>c"]);
+}
+
 // What a Claude Code session is doing: its latest step, read from the end of the transcript.
 {
   const j = (o) => JSON.stringify(o);

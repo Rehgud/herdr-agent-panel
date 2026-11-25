@@ -19,7 +19,9 @@ A panel block that shows, for every coding-agent session, which model it runs, i
    - A box for this computer ("This computer", Korean "이 컴퓨터", monitor icon, "N sessions"; a remote machine gets its own box with a server icon and its name), then the sessions (current first, then the list's order), then what each started, its sub-agents and background tasks, and their own children.
    - Indented: each box under the one before it, 24px further in per level and nearly the panel's full width; lines run down the parent's rail (under its icon) and turn into the child with a 6px rounded corner. Columns: one column per level left to right (the machine box 88px, 124px in English), the rest sharing the width. Org chart: one row per level, a parent centred over its children, each leaf at least 96px across; wider than the panel, it scrolls sideways.
    - Session boxes are 60px tall with three lines (name and status; model with effort meter, and the context meter when the box is at least 150px wide; what it is doing now). Other boxes are 38px with two lines (name; model or kind, and elapsed time).
-   - Each box is joined to its parent by a 1px line, drawn in `working` with a pulsing dot where it arrives when the child is running. The current session's box has a 1.5px `accent` border. Finished sub-agents fold into an "N done" pill, as in the list.
+   - Each box is joined to its parent by a 1px line, drawn in `working` when the child is running. The current session's box has a 1.5px `accent` border. Finished sub-agents fold into an "N done" pill, as in the list.
+   - **What flows along the lines.** While a child works, a 5px ball in the line's color rolls through the line as through a pipe: out of the parent's box, along the line (down the rail and round the corner, or along the curve), into the child's box, once every 2.8s, easing in and out. When a child starts working (its parent handed work over) a brighter 6px one rolls the same way for 6s; when it stops (it answered) a `done`-blue one rolls back up for 6s. A child removed the moment it exits (`hc run --rm`) keeps its box for those 6s, so its answer shows.
+   - The List | Diagram and layout buttons share one raised thumb that springs to the pick, overshooting a little before it settles.
 
 ## How it behaves
 
@@ -37,6 +39,8 @@ A panel block that shows, for every coding-agent session, which model it runs, i
 - `herdr` functions: `agents`, `terminals`, `spaces`, `panes`, `focused`, `layout`, `props`, `settings`, `theme`, `run`, `exec`, `home`, `appHome`, `readTextFile`, `checking`. Commands: `agent.focus`, `terminal.peek`.
 - The diagram's layouts, in `lib.js`: `stackTree` (Indented: each box's top and indent), `placeTree` (Columns: each box's column and row, a leaf taking the next row and a parent sitting level with the middle of its children, half a row between sessions) and `orgTree` (Org chart: `placeTree`'s rows turned on their side). Boxes are absolutely placed `div`s; the lines are one `PathBuilder.stroke(1)` per color drawn with `window.paint_path` under them, the running ones last.
 - What a session is doing: `activity` in `lib.js` (Claude Code's transcript) and `commandTitle` (a title that is still a command line).
+- What flows: each line's shape is defined once (`lineOf` in `main.js`: straight runs, a quadratic corner, cubic curves) and both drawn with `PathBuilder` and turned into points (`bezierPoints`, `resample` in `lib.js`). The ball is a relay of small `div`s, one per 6px of those points: each appears when the one before arrives, slides its step and shrinks away, all set in one render with transition delays, so two renders a pass keep it on the line however it bends. `talkEvents` decides who just spoke from each child's status against the last look.
+- The toggles' thumb: each button's width from `on_size_change` (divided by `settings().zoom`), then `spring("left")` and `spring("width")` with `{ response: 340, damping: 0.62 }`.
 - Sessions and their state come from `agents()`. Sub-agents started with `hc run` come from `terminals()` (`parent`).
 - Model, effort, ULTRACODE mode, context and cache times for Claude Code come from the over9k sidebar's cache, `~/.cache/over9k/agents/<terminal>.json`. Claude Code's own sub-agents come from `~/.cache/over9k/subagents-<cksum of the transcript path>`, and its unfinished background commands from `~/.cache/over9k/tasks-<same cksum>` (over9k's `tasks.sh`: one task per line with tab-separated fields: kind, id, description, start time, schedule, output file).
 - Antigravity details come from running over9k's `agy-info.py` and `agy-subagents.py` (read-only), only while an agy session is listed. Codex details come from its terminal title, or the defaults in `~/.codex/config.toml`.
@@ -49,6 +53,9 @@ A panel block that shows, for every coding-agent session, which model it runs, i
 - The over9k sub-agent file is named by the POSIX `cksum` of the transcript path; the JS implementation must match the system `cksum` output (see the test).
 - The diagram's width comes from `on_size_change`, which reports window pixels: divide by `settings().zoom` before placing boxes.
 - A transcript's last line can be a tool output bigger than the tail read; then the last known step stays.
+- `cx.new()` returns a handle, not the view: fields set on it never reach the view (use `set_props`), which is why the balls are drawn by the panel itself.
+- One element can't go through several targets in one render, and easing each axis differently only imitates a curve; the relay of elements is what keeps a ball on the line.
+- The balls redraw the panel twice a pass (2.8s) while anything flows, and not at all otherwise.
 - A new Claude Code session has no model until its first reply.
 - Codex was checked with demo data only.
 
@@ -58,3 +65,4 @@ A panel block that shows, for every coding-agent session, which model it runs, i
 - With over9k installed and a Claude Code session running, the current session shows its model and effort as Claude Code reports them, and its last line changes as the agent moves from step to step.
 - Starting `hc run -- agy` from that session shows an Antigravity line in its sub-agent tree within about 10 seconds, with its model, since it differs from the session's.
 - With Diagram chosen, a lone session shows as a "This computer" box joined to that session's box; `hc run --bg -- sleep 60` from that session adds a box under it (Indented) on a `working` line, and the three layout buttons redraw it each way.
+- `hc run --bg --rm -- sleep 8` from that session: a bright ball rolls down to its box, softer ones follow while it runs, and when it ends a blue one rolls back up while the box stays a few seconds. Filmed frame by frame, the ball's track lies on the line in all three layouts.

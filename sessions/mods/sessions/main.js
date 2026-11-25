@@ -7,7 +7,7 @@
 import { View, div, image, svg, PathBuilder } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
 import { agents, terminals, spaces, panes, focused, layout, props, settings, theme, run, exec, home, appHome, readTextFile, checking } from "herdr";
-import { TEXT, EFFORTS, effortLevel, span, ago, elapsed, cksum, parseSubs, clean, codexDefaults, argvModel, kind, details, sortSessions, pickCurrent, foldSubs, folderName, parseTasks, scheduled, taskBadge, taskWhen, placeTree, stackTree, orgTree, activity, commandTitle, demoData } from "./lib.js";
+import { TEXT, EFFORTS, effortLevel, span, ago, elapsed, cksum, parseSubs, clean, codexDefaults, argvModel, kind, details, sortSessions, pickCurrent, foldSubs, folderName, parseTasks, scheduled, taskBadge, taskWhen, placeTree, stackTree, orgTree, bezierPoints, resample, talkEvents, activity, commandTitle, demoData } from "./lib.js";
 
 const MOD = "sessions";
 const POLL_MS = 5000;
@@ -129,6 +129,15 @@ class Sweep extends View {
   }
 }
 
+// What flows along the diagram's lines: a ball rolling through the line as through a pipe, out of
+// the parent's box and into the child's (both drawn over it, so it comes and goes without a jump),
+// down a line to a child at work, and for a few seconds after an exchange brighter one way when
+// the parent hands work over, blue the other way when the child answers. One move a pass: in the
+// indented layout `top` and then `left` slide (a delay between them), which turns the corner.
+const FLOW_MS = 2800;  // one pass
+const PX_MS = 14;      // its pace, ms a pixel, slower only if a long line would not fit in a pass
+const TALK_FOR = 6000; // how long an exchange shows
+
 const tabLabel = (a, tx) => (/^\d+$/.test(a.tab_name ?? "") ? tx.tabN(a.tab_name) : a.tab_name);
 
 export default class Sessions extends View {
@@ -142,6 +151,12 @@ export default class Sessions extends View {
     this.doing = {};   // terminal -> what its Claude Code is doing now, one line
     this.open = new Set(); // sessions whose finished sub-agents show
     this.sweep = cx.new(Sweep);
+    this.flowPass = 0;
+    this.flowStep = 0;
+    this.flowing = false;   // whether the diagram has lines with something flowing
+    this.said = new Map();   // parent>child -> its status at the last look (who spoke)
+    this.talks = new Map();  // parent>child -> { dir, until }: an exchange being shown
+    this.ghosts = new Map(); // parent>child -> { owner, node, until }: a child that left as it answered
     this.lang = pickLang(props()?.lang);
     if (!this.lang && !props()?.demo) {
       // The last detection draws first so a Korean screen doesn't flash English.
@@ -166,6 +181,14 @@ export default class Sessions extends View {
     // Nothing is read or run for them, and clicks go nowhere.
     this.demo = props()?.demo ? demoData(Date.now() / 1000, this.lang) : null;
     if (this.demo) Object.assign(this, { saved: this.demo.saved, subs: this.demo.subs, tasks: this.demo.tasks });
+    if (!checking()) cx.timer.every(FLOW_MS, (cx) => {
+      if (!this.flowing || !visible()) return;
+      this.flowPass += 1;
+      this.flowStep = 0;
+      cx.notify();
+      // Drawn where it starts first; only the move after that slides.
+      cx.timer.after(50, (cx) => { this.flowStep = 1; cx.notify(); });
+    });
     if (checking() || this.demo) return;
     this.refresh(cx);
     cx.timer.every(POLL_MS, (cx) => this.refresh(cx));
@@ -438,30 +461,65 @@ export default class Sessions extends View {
       machines.get(on).sessions.push({ a, nodes: this.tree(a.address, terms) });
     }
     const roots = [...machines.values()];
-    const under = (x) => (x.sessions ?? (x.a ? this.under(x.nodes, x.a.address) : x.n ? this.under(x.n.children, x.n.id) : []));
+    // A child that has just left still shows while its answer runs up the line.
+    const nowMs = Date.now();
+    for (const [key, g] of this.ghosts) if (g.until < nowMs) this.ghosts.delete(key);
+    const left = (owner) => [...this.ghosts.values()].filter((g) => g.owner === owner).map((g) => g.node);
+    const under = (x) => (x.sessions ?? (x.a ? this.under([...x.nodes, ...left(x.a.address)], x.a.address)
+      : x.n ? this.under([...x.n.children, ...left(x.n.id)], x.n.id) : []));
     // Each session's facts once: whether it has a line on what it's doing sets its box's height.
     const info = new Map(sessions.map((a) => { const d = this.facts(a); return [a, { d, ...this.naming(a, d, terms) }]; }));
     const pill = (x) => Boolean(x.fold || x.more);
     const height = (x) => (x.fold ? 22 : x.more ? 18 : x.a && info.get(x.a).summary ? SESSION_H : NODE_H);
     const W = this.width;
-    let shape = this.shape, layout;
-    if (shape === "indent") {
-      layout = stackTree(roots, under, height);
-      for (const b of layout.boxes) b.w = pill(b.x) ? null : W - b.left;
-    } else if (shape === "org") {
-      layout = orgTree(roots, under, height, { slot: Math.max(ORG_SLOT, W / Math.max(1, placeTree(roots, under, 1).rows)) });
-    } else {
-      shape = "ltr";
-      const { boxes, rows, depth: deepest } = placeTree(roots, under, 1);
-      // The machine's column is narrow (its box says little); the others share what's left.
-      const rootW = ROOT_W[this.lang], depth = Math.max(1, deepest), w = Math.max(60, Math.floor((W - rootW - GAP_X * depth) / depth));
-      // A session's box is taller than a row: the drawing moves down by what that adds above.
-      const pad = (SESSION_H - NODE_H) / 2;
-      for (const b of boxes) Object.assign(b, { h: height(b.x), w: pill(b.x) ? null : b.depth ? w : rootW,
-        left: b.depth ? rootW + GAP_X + (b.depth - 1) * (w + GAP_X) : 0 });
-      for (const b of boxes) b.top = pad + b.row * ROW + NODE_H / 2 - b.h / 2;
-      layout = { boxes, height: 2 * pad + Math.max(NODE_H, rows * ROW - (ROW - NODE_H)) };
+    const shape = SHAPES.includes(this.shape) ? this.shape : "ltr";
+    // Where every box goes; again if a child that just left comes back as a ghost.
+    const place = () => {
+      let layout;
+      if (shape === "indent") {
+        layout = stackTree(roots, under, height);
+        for (const b of layout.boxes) b.w = pill(b.x) ? null : W - b.left;
+      } else if (shape === "org") {
+        layout = orgTree(roots, under, height, { slot: Math.max(ORG_SLOT, W / Math.max(1, placeTree(roots, under, 1).rows)) });
+      } else {
+        const { boxes, rows, depth: deepest } = placeTree(roots, under, 1);
+        // The machine's column is narrow (its box says little); the others share what's left.
+        const rootW = ROOT_W[this.lang], depth = Math.max(1, deepest), w = Math.max(60, Math.floor((W - rootW - GAP_X * depth) / depth));
+        // A session's box is taller than a row: the drawing moves down by what that adds above.
+        const pad = (SESSION_H - NODE_H) / 2;
+        for (const b of boxes) Object.assign(b, { h: height(b.x), w: pill(b.x) ? null : b.depth ? w : rootW,
+          left: b.depth ? rootW + GAP_X + (b.depth - 1) * (w + GAP_X) : 0 });
+        for (const b of boxes) b.top = pad + b.row * ROW + NODE_H / 2 - b.h / 2;
+        layout = { boxes, height: 2 * pad + Math.max(NODE_H, rows * ROW - (ROW - NODE_H)) };
+      }
+      return layout;
+    };
+    let layout = place();
+    // Who spoke: each line's child against the last look. A child that vanished mid-work (a
+    // terminal removed as it exits) answered as it went: kept a moment as a ghost to answer from.
+    const ownerOf = (b) => b.parent?.x.a?.address ?? b.parent?.x.n?.id;
+    const keyOf = (b) => `${ownerOf(b)}>${b.x.n.id}`;
+    const children = layout.boxes.filter((b) => b.parent && b.x.n && !b.x.n.task && !b.x.n.ghost);
+    const { events, gone } = talkEvents(this.said, children.map((b) => ({ key: keyOf(b), status: b.x.n.status, startedAt: b.x.n.startedAt })), now);
+    for (const e of events) this.talks.set(e.key, { dir: e.dir, until: nowMs + TALK_FOR });
+    // Gone mid-work, or mid-answer (a `hc run --rm` terminal shows "done" for a moment, then goes).
+    const here = new Set(children.map(keyOf));
+    const left_ = [...new Set([...gone, ...[...this.said.keys()].filter((key) => !here.has(key) && this.talks.has(key))])];
+    let ghosted = false;
+    for (const key of left_) {
+      const was = this.lastSeen?.get(key);
+      if (!was || this.ghosts.has(key)) continue;
+      // Its own id: the child itself may still be listed, folded away under "N done".
+      const node = { ...was.node, id: `${was.node.id}~`, ghost: true, status: "done", done: false, terminal: null, children: [] };
+      this.ghosts.set(key, { owner: was.owner, node, until: nowMs + TALK_FOR });
+      this.talks.set(`${was.owner}>${node.id}`, { dir: "reply", until: nowMs + TALK_FOR });
+      ghosted = true;
     }
+    this.said = new Map(children.map((b) => [keyOf(b), b.x.n.status]));
+    this.lastSeen = new Map(children.map((b) => [keyOf(b), { owner: ownerOf(b), node: b.x.n }]));
+    for (const [key, talk] of this.talks) if (talk.until < nowMs) this.talks.delete(key);
+    if (ghosted) layout = place(); // the one that left gets its box back to answer from
+
     const { boxes } = layout;
     const runs = (b) => b.x.a?.status === "working" || b.x.n?.status === "working" || (b.x.n?.task && !scheduled(b.x.n));
     const mid = (b) => b.top + b.h / 2;
@@ -473,28 +531,66 @@ export default class Sessions extends View {
       .rounded(6).bg(t.background).border(1).border_color(border).overflow_hidden();
     const second = (...parts) => div().min_w(0).truncate().text_size(10.5).text_color(t.muted).child(parts.filter(Boolean).join(" · "));
 
-    // The curves, one path per color, the running ones drawn last so they show over the rest.
-    const line = t.input ?? t.border, strokes = new Map([[line, null], [t.working, null]]);
-    for (const b of boxes.filter((b) => b.parent)) {
-      const p = b.parent, color = runs(b) ? t.working : line, [x2, y2] = into(b);
-      let path = strokes.get(color) ?? PathBuilder.stroke(1);
+    // Each line's shape, defined once: drawn as it says, and the balls roll along the same points.
+    // `from` and `to` reach inside the two boxes, where a ball comes out and goes in unseen.
+    const lineOf = (b) => {
+      const p = b.parent, [x2, y2] = into(b);
       if (shape === "indent") {
         // Down the parent's rail, under its icon, then a rounded turn into the box.
         const rail = p.left + 14;
-        path = path.move_to(rail, p.top + p.h).line_to(rail, y2 - 6).curve_to(rail + 6, y2, rail, y2).line_to(x2, y2);
-      } else if (shape === "org") {
+        return { start: [rail, p.top + p.h], parts: [["line", [rail, y2 - 6]], ["quad", [rail, y2], [rail + 6, y2]], ["line", [x2, y2]]],
+          from: [rail, mid(p)], to: [x2 + 14, y2] };
+      }
+      if (shape === "org") {
         const x1 = p.left + p.w / 2, y1 = p.top + p.h, dy = (y2 - y1) / 2;
-        path = path.move_to(x1, y1).cubic_bezier_to(x2, y2, x1, y1 + dy, x2, y2 - dy);
-      } else {
-        const x1 = p.left + p.w, y1 = mid(p);
-        path = path.move_to(x1, y1).cubic_bezier_to(x2, y2, x1 + GAP_X / 2, y1, x2 - GAP_X / 2, y2);
+        return { start: [x1, y1], parts: [["cubic", [x1, y1 + dy], [x2, y2 - dy], [x2, y2]]], from: [x1, mid(p)], to: [x2, y2 + 12] };
+      }
+      const x1 = p.left + p.w, y1 = mid(p);
+      return { start: [x1, y1], parts: [["cubic", [x1 + GAP_X / 2, y1], [x2 - GAP_X / 2, y2], [x2, y2]]], from: [x1 - 14, y1], to: [x2 + 14, y2] };
+    };
+    // The curves, one path per color, the running ones drawn last so they show over the rest.
+    const line = t.input ?? t.border, strokes = new Map([[line, null], [t.working, null]]);
+    for (const b of boxes.filter((b) => b.parent)) {
+      const color = runs(b) ? t.working : line, l = lineOf(b);
+      let path = (strokes.get(color) ?? PathBuilder.stroke(1)).move_to(...l.start);
+      for (const [kind, a, c, d] of l.parts) {
+        path = kind === "line" ? path.line_to(...a) : kind === "quad" ? path.curve_to(c[0], c[1], a[0], a[1]) : path.cubic_bezier_to(d[0], d[1], a[0], a[1], c[0], c[1]);
       }
       strokes.set(color, path);
     }
-    const pulses = boxes.filter((b) => b.parent && runs(b)).map((b) => {
-      const [x, y] = into(b);
-      return div().absolute().left(x - 3).top(y - 3).size(6).rounded(3).bg(t.working).loop("opacity", { from: 0.25, to: 1, period: 1200 });
+    // A ball's way: out of the parent's box, along the line's own points, into the child's box.
+    const wayOf = (l) => {
+      const points = [l.from, l.start];
+      let at = l.start;
+      for (const [kind, ...c] of l.parts) {
+        points.push(...(kind === "line" ? c : bezierPoints([at, ...c]).slice(1)));
+        at = c[c.length - 1];
+      }
+      return [...points, l.to];
+    };
+    const flows = boxes.filter((b) => b.parent && b.x.n).flatMap((b) => {
+      const talk = this.talks.get(keyOf(b));
+      if (!talk && !runs(b)) return [];
+      const back = talk?.dir === "reply", way = wayOf(lineOf(b));
+      return [{ id: keyOf(b), points: back ? way.reverse() : way, color: back ? t.done : t.working, strong: Boolean(talk) }];
     });
+    this.flowing = flows.length > 0;
+    // The ball is a relay of small ones, one for each 6px of the way: each shows when the one
+    // before arrives, slides its step and goes, all set at once with delays, so one move a pass
+    // keeps it on the line however it bends. Easing in and out over the whole way.
+    const step = this.flowStep, pass = this.flowPass;
+    const ease = (u) => (u < 0.5 ? 4 * u ** 3 : 1 - (-2 * u + 2) ** 3 / 2);
+    const balls = (f) => {
+      const pts = resample(f.points, 6), S = pts[pts.length - 1].s || 1;
+      const T = Math.min(S * PX_MS, FLOW_MS - 300), time = (s) => T * ease(s / S), r = f.strong ? 3 : 2.5;
+      return pts.slice(0, -1).map((a, k) => {
+        const b = pts[k + 1], t0 = time(a.s), t1 = time(b.s), at = step ? b : a, slide = { duration: Math.max(1, t1 - t0), delay: t0, easing: "linear" };
+        return div().id(`flow-${f.id}-${k}-${pass}`).absolute().left(at.x - r).top(at.y - r).w(step ? 0 : 2 * r).h(step ? 0 : 2 * r).rounded(r)
+          .bg(f.color).opacity(step ? (f.strong ? 1 : 0.75) : 0)
+          .transition("left", slide).transition("top", slide).transition("opacity", { duration: 1, delay: t0 })
+          .transition("width", { duration: 1, delay: t1 }).transition("height", { duration: 1, delay: t1 });
+      });
+    };
 
     const nodes = boxes.map((b) => {
       const { machine, a, n, fold, owner, more } = b.x;
@@ -552,7 +648,7 @@ export default class Sessions extends View {
     const paint = ([color, path]) => window.paint_path(path.build(), color).absolute().top(0).left(0).size_full();
     // An org chart wider than the panel scrolls sideways inside it.
     const drawing = div().relative().flex_none().w(Math.max(W, layout.width ?? W)).h(layout.height)
-      .children([...strokes].filter(([, path]) => path).map(paint)).children(pulses).children(nodes);
+      .children([...strokes].filter(([, path]) => path).map(paint)).children(flows.flatMap(balls)).children(nodes);
     return div().id("diagram").mx(6).mt(4).flex_none().overflow_x_scroll()
       .on_size_change((size, cx) => {
         const width = size.width / (settings().zoom || 1);
@@ -562,18 +658,33 @@ export default class Sessions extends View {
   }
 
   // List or diagram: two buttons side by side, the shown one raised.
-  // Buttons side by side, the chosen one raised; a pick is remembered under `key`.
+  // Buttons side by side, the chosen one raised; a pick is remembered under `key`. Once their
+  // widths are known, the raised part is one thumb that springs to the pick, overshooting a
+  // little and settling, instead of jumping.
   toggle(t, key, options) {
+    const widths = ((this.widths ??= {})[key] ??= {});
+    const known = options.every(([value]) => widths[value]);
+    const lefts = {};
+    let x = 2;
+    for (const [value] of options) { lefts[value] = x; x += (widths[value] ?? 0) + 2; }
     const button = ([value, label]) => div().id(`${key}-${value}`).h(18).px(7).flex().items_center().rounded(4).cursor_pointer().text_size(11)
-      .text_color(this[key] === value ? t.foreground : t.muted).when(this[key] === value, (el) => el.bg(t.background))
+      .text_color(this[key] === value ? t.foreground : t.muted).when(!known && this[key] === value, (el) => el.bg(t.background))
       .hover((s) => s.text_color(t.foreground))
+      .on_size_change((size, cx) => {
+        const w = size.width / (settings().zoom || 1);
+        if (Math.abs((widths[value] ?? 0) - w) >= 0.5) { widths[value] = w; cx.notify(); }
+      })
       .on_click((_e, cx) => {
         this[key] = value;
         try { localStorage.setItem(key, value); } catch { /* not remembered */ }
         cx.notify();
       })
       .child(label);
-    return h_flex().flex_none().p(2).gap(2).rounded(6).bg(t.raised).children(options.map(button));
+    const spring = { response: 340, damping: 0.62 };
+    return h_flex().relative().flex_none().p(2).gap(2).rounded(6).bg(t.raised)
+      .when(known, (el) => el.child(div().id(`${key}-thumb`).absolute().top(2).h(18).rounded(4).bg(t.background)
+        .left(lefts[this[key]]).w(widths[this[key]]).spring("left", spring).spring("width", spring)))
+      .children(options.map(button));
   }
 
   viewToggle(t) {
@@ -592,6 +703,7 @@ export default class Sessions extends View {
   }
 
   render() {
+    this.flowing = false; // until a diagram drawn below says otherwise
     const t = theme();
     const tx = TEXT[this.lang];
     const demo = this.demo;

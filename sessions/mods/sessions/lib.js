@@ -374,6 +374,43 @@ export function orgTree(roots, under, height, { slot, vgap = 28, gap = 8 }) {
   return { boxes, width: rows * slot, height: Math.max(0, y - vgap) };
 }
 
+// The points of a drawn curve, for a ball to roll along it: a cubic (PathBuilder's
+// cubic_bezier_to) or a quadratic (curve_to) Bézier, at n even steps of its parameter.
+const lerpBezier = (pts, t) => (pts.length === 1 ? pts[0]
+  : lerpBezier(pts.slice(1).map((p, i) => [pts[i][0] + (p[0] - pts[i][0]) * t, pts[i][1] + (p[1] - pts[i][1]) * t]), t));
+export const bezierPoints = (ctrl, n = 16) => Array.from({ length: n + 1 }, (_, i) => lerpBezier(ctrl, i / n));
+
+// A polyline cut into even steps of about `step` px: [{ x, y, s }], s the distance from its start.
+export function resample(points, step = 6) {
+  const out = [{ x: points[0][0], y: points[0][1], s: 0 }];
+  let s = 0;
+  for (let i = 1; i < points.length; i++) {
+    const [ax, ay] = points[i - 1], [bx, by] = points[i], len = Math.hypot(bx - ax, by - ay);
+    if (!len) continue;
+    const n = Math.max(1, Math.round(len / step));
+    for (let k = 1; k <= n; k++) out.push({ x: ax + ((bx - ax) * k) / n, y: ay + ((by - ay) * k) / n, s: s + (len * k) / n });
+    s += len;
+  }
+  return out;
+}
+
+// Who just spoke between an agent and what it started. `prev`: key -> status at the last look;
+// `items`: [{ key, status, startedAt }] now. "send" (the parent spoke) when a child starts
+// working, brand new or on a new turn; "reply" when it stops. `gone`: the keys that vanished
+// mid-work (a terminal removed as it exits): they replied too, as they went.
+export function talkEvents(prev, items, now, fresh = 20) {
+  const events = [], here = new Set();
+  for (const { key, status, startedAt } of items) {
+    here.add(key);
+    const was = prev.get(key);
+    const started = was === undefined ? status === "working" && startedAt != null && now - startedAt < fresh : was !== "working" && status === "working";
+    if (started) events.push({ key, dir: "send" });
+    else if (was === "working" && status !== "working") events.push({ key, dir: "reply" });
+  }
+  const gone = [...prev].filter(([key, status]) => !here.has(key) && status === "working").map(([key]) => key);
+  return { events: [...events, ...gone.map((key) => ({ key, dir: "reply" }))], gone };
+}
+
 // A session's name: the folder it was started in ("~" at home), as the user names sessions.
 export function folderName(cwd, homeDir) {
   const raw = String(cwd ?? "");
