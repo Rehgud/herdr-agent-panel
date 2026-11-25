@@ -439,7 +439,7 @@ export default class Sessions extends View {
     const nodes = boxes.map((b) => {
       const { machine, a, n, fold, owner, more } = b.x;
       if (b.x.sessions) return frame(b, `d-machine-${machine}`, t.input ?? t.border).bg(t.raised)
-        .tooltip(machine || tx.thisComputer)
+        .tooltip(machine || tx.thisComputerTip)
         .child(h_flex().gap(5).items_center()
           .child(svg(`mods/workspace-chrome/${machine ? "server" : "monitor"}.svg`).size(12).flex_none().text_color(t.muted))
           .child(div().flex_1().min_w(0).truncate().text_size(12).font_medium().child(machine || tx.thisComputer)))

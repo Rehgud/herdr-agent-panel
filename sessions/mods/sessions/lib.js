@@ -45,7 +45,8 @@ export const TEXT = {
     all: "All sessions",
     list: "List",
     diagram: "Diagram",
-    thisComputer: "This computer",
+    thisComputer: "Local", // the diagram's 88px box: "This computer" doesn't fit
+    thisComputerTip: "This computer",
     sessionsN: (n) => (n === 1 ? "1 session" : `${n} sessions`),
     noneHere: "No agent sessions in this space",
     noOthers: "No other sessions",
@@ -95,6 +96,7 @@ export const TEXT = {
     list: "List",
     diagram: "Diagram",
     thisComputer: "이 컴퓨터",
+    thisComputerTip: "이 컴퓨터",
     sessionsN: (n) => `세션 ${n}개`,
     noneHere: "이 스페이스에는 에이전트 세션이 없어요",
     noOthers: "다른 세션이 없어요",

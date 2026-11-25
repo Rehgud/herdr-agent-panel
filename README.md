@@ -8,6 +8,10 @@ Mods for the Herdr desktop app that add **AI plan usage** and **each session's m
 
 ![The whole panel](docs/panel.png)
 
+Switch the sessions list to **Diagram** to see the same sessions as a map, with what each one started:
+
+![The sessions diagram](docs/diagram.png)
+
 ## Mods
 
 | Mod | What it does |
