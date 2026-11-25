@@ -8,7 +8,7 @@ A panel block that shows how much of your Claude Code and Antigravity plans you 
 
 Top to bottom, 12px padding, on the theme `background`, with a 1px `border` line at the bottom:
 
-1. **Claude Code section.** A 14px semibold title "Claude Code", a small gray pill with the plan ("Max 5x"), and on the right how long ago the data was updated ("just now", "3m ago").
+1. **Claude Code section.** A 12px chevron (down when open, right when folded), a 14px semibold title "Claude Code", a small gray pill with the plan ("Max 5x"), and on the right how long ago the data was updated ("just now", "3m ago").
    - Rows, 18px tall, 11px text, in fixed columns: label (104px) · bar (flexible, 5px tall, rounded, `raised` track) · percent (32px) · time to reset (60px, muted, e.g. "2h 5m").
    - "Claude 5h", "Claude 7d", then one row per model limit that Claude Code's `/usage` reports, e.g. "Fable 7d".
    - Bars are `accent`, `working` from 60% and `blocked` from 85%.
@@ -25,7 +25,8 @@ In Korean the same screen reads "Claude 5시간", "Fable 7일", "모델별", "�
 ## How it behaves
 
 - The block resizes itself to its content (`layout.resize` on its own layout node), so collapsing a section gives the space back to the block below.
-- Fold states are remembered per block instance in `localStorage`.
+- Clicking a section's title line (chevron, title, plan) folds the whole section down to that line; clicking again opens it.
+- Fold states (each section, and each "By model") are remembered per block instance in `localStorage`.
 - Language: `props().lang` (`"en"` or `"ko"`) if set; otherwise Korean when the first entry of `defaults read -g AppleLanguages` starts with `ko`, English for anything else. The last detected language is kept in `localStorage`, so the block opens in that language before the check finishes.
 - A window whose reset time has passed shows 0% until new data arrives.
 - Refresh: the status line files are watched (`watchFolder`) and updates appear immediately; `/usage` and the token split run every 30 seconds; countdowns redraw every 30 seconds.
@@ -39,7 +40,7 @@ In Korean the same screen reads "Claude 5시간", "Fable 7일", "모델별", "�
   - `~/.claude/state/statusline-latest.json` (Claude Code `rate_limits`)
   - `~/.cache/agy-statusline/latest.json` (agy `quota`, `plan_tier`)
 - The plan pill for Claude comes from `oauthAccount.organizationRateLimitTier` in `~/.claude.json`.
-- `props().demo` renders fixed mock numbers for screenshots instead of live data, with both sections expanded; `props().open` (for example `{"claude": false}`) overrides which sections are open, and `props().width` sets a fixed width. A demo copy reads no files, runs no commands, and leaves the layout untouched; it uses `props().lang`, English by default.
+- `props().demo` renders fixed mock numbers for screenshots instead of live data, with both sections expanded; `props().open` (for example `{"claude": false}`) overrides which "By model" folds are open, `props().hidden` (for example `{"agy": true}`) folds whole sections, and `props().width` sets a fixed width. A demo copy reads no files, runs no commands, and leaves the layout untouched; it uses `props().lang`, English by default.
 
 ## Watch out
 

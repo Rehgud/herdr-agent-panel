@@ -142,4 +142,19 @@ assert.deepEqual([demoEn.subs.d1.map((s) => s.name), demoEn.terms[4].name, demoE
 assert.equal(L.taskBadge(demoEn.tasks.d4, en), "1 task running"); assert.equal(L.taskWhen(demoEn.tasks.d4[0], demoEn.now, en), "3h");
 const busy = (a) => (demo.tasks[a.address] ?? []).some((k) => !L.scheduled(k));
 assert.deepEqual(L.sortSessions(demo.list.slice(1), busy).map((a) => a.space_name), ["ml-train", "docs-site", "api-server"]);
+// The diagram: a leaf per row, a parent level with the middle of its children, half a row
+// between trees, depth counted from the sessions.
+{
+  const kids = { s1: ["a", "b", "c"], b: ["b1", "b2"], s2: [] };
+  const { boxes, rows, depth } = L.placeTree(["s1", "s2"], (x) => kids[x] ?? []);
+  const at = Object.fromEntries(boxes.map((b) => [b.x, [b.depth, b.row]]));
+  assert.deepEqual(at, { s1: [0, 1.5], a: [1, 0], b: [1, 1.5], b1: [2, 1], b2: [2, 2], c: [1, 3], s2: [0, 4.5] });
+  assert.deepEqual([rows, depth], [5.5, 2]);
+  assert.equal(boxes.find((b) => b.x === "b1").parent.x, "b");
+  assert.deepEqual(L.placeTree([], () => []), { boxes: [], rows: 0, depth: 0 });
+  // apart = 1: the sessions under one machine are parted too, their sub-agents aren't.
+  const one = L.placeTree(["pc"], (x) => ({ pc: ["s1", "s2"], s1: ["a", "b"] })[x] ?? [], 1);
+  assert.deepEqual(Object.fromEntries(one.boxes.map((b) => [b.x, b.row])), { pc: 1.5, s1: 0.5, a: 0, b: 1, s2: 2.5 });
+  assert.equal(one.rows, 3.5);
+}
 console.log("lib ok");

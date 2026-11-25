@@ -3,7 +3,7 @@
 // (~/.claude/statusline-usage.sh, ~/.gemini/antigravity-cli/statusline-usage.sh); Claude's
 // per-model weekly limits (Fable, ...) from Claude Code's own /usage (plan-usage.py), which the
 // status line doesn't carry. Per-model rows fold away under "By model" (모델별).
-import { View, div } from "gpui-kit";
+import { View, div, svg } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
 import { home, appHome, readTextFile, watchFolder, exec, theme, checking, layout, settings, run, props } from "herdr";
 
@@ -132,6 +132,7 @@ export default class AiUsage extends View {
     this.plan = null;
     this.split = null;
     this.open = { claude: false, agy: false };
+    this.hidden = { claude: false, agy: false }; // sections folded to their title line
     this.lang = pickLang(props()?.lang);
     if (props()?.demo) { this.lang ??= "en"; this.demo(Date.now() / 1000); return; }
     if (!this.lang) {
@@ -145,6 +146,7 @@ export default class AiUsage extends View {
       });
     }
     try { Object.assign(this.open, JSON.parse(localStorage.getItem("open") ?? "{}")); } catch { /* defaults */ }
+    try { Object.assign(this.hidden, JSON.parse(localStorage.getItem("hidden") ?? "{}")); } catch { /* defaults */ }
     cx.spawn(async (cx) => {
       const text = await readTextFile(`${home()}/.claude.json`).catch(() => null);
       try { this.claudePlan = claudePlan(JSON.parse(text ?? "null")?.oauthAccount); } catch { /* plan stays unnamed */ }
@@ -174,6 +176,7 @@ export default class AiUsage extends View {
     const week = now + 3 * 86400 + 4 * 3600;
     this.demoNow = now;
     this.open = { claude: true, agy: true, ...props().open };
+    this.hidden = { ...this.hidden, ...props().hidden }; // { agy: true }: that section folded
     this.claudePlan = "Max 5x";
     this.savedAt = { claude: now - 20, agy: now - 240 };
     this.data = {
@@ -235,9 +238,10 @@ export default class AiUsage extends View {
     });
   }
 
-  toggle(name, cx) {
-    this.open[name] = !this.open[name];
-    try { localStorage.setItem("open", JSON.stringify(this.open)); } catch { /* not remembered */ }
+  // store: "open" (a section's By model fold) or "hidden" (the whole section folded).
+  toggle(store, name, cx) {
+    this[store][name] = !this[store][name];
+    try { localStorage.setItem(store, JSON.stringify(this[store])); } catch { /* not remembered */ }
     cx.notify();
   }
 
@@ -289,19 +293,23 @@ export default class AiUsage extends View {
       const at = this.savedAt[name];
       const age = at ? now - at : null;
       const open = this.open[name];
-      const has = Boolean(this.data[name]);
+      const shut = this.hidden[name];
+      const has = Boolean(this.data[name]) && !shut;
       return v_flex().gap(4).flex_none()
-        .child(h_flex().items_center().gap(8).mb(4)
+        // The title line folds the whole section away, giving its room to the panel below.
+        .child(h_flex().id(`head-${name}`).items_center().gap(8).when(!shut, (el) => el.mb(4)).cursor_pointer()
+          .on_click((_e, cx) => this.toggle("hidden", name, cx))
+          .child(svg(`mods/workspace-chrome/chevron-${shut ? "right" : "down"}.svg`).size(12).flex_none().text_color(t.muted))
           .child(div().text_size(14).font_weight(600).text_color(t.foreground).child(product))
           .when(Boolean(plan), (el) => el.child(div().px(6).py(1).rounded(4).bg(t.raised).text_size(11).text_color(t.muted).child(plan)))
           .child(div().flex_1())
           .child(div().text_size(11).text_color(t.muted).child(age == null ? "" : age < 90 ? tx.justNow : tx.ago(span(age, tx)))))
-        .when(!has, (el) => el.child(div().text_size(11).text_color(t.muted).child(empty)))
+        .when(!this.data[name] && !shut, (el) => el.child(div().text_size(11).text_color(t.muted).child(empty)))
         .when(has, (el) => el.children(rows.map(row)))
         .when(has && (modelRows.length > 0 || Boolean(extra)), (el) => el
           .child(h_flex().id(`fold-${name}`).h(20).mt(2).gap(6).items_center().rounded(4).cursor_pointer()
             .text_size(11).text_color(t.muted).hover((s) => s.text_color(t.foreground))
-            .on_click((_e, cx) => this.toggle(name, cx))
+            .on_click((_e, cx) => this.toggle("open", name, cx))
             .child(div().w(10).child(open ? "▾" : "▸"))
             .child(div().child(tx.byModel))
             .when(modelRows.length > 0, (el) => el.child(div().px(5).rounded(4).bg(t.raised).child(String(modelRows.length)))))

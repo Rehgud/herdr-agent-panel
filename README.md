@@ -12,8 +12,8 @@ Mods for the Herdr desktop app that add **AI plan usage** and **each session's m
 
 | Mod | What it does |
 |---|---|
-| [`ai-usage`](ai-usage/) | Shows Claude Code's 5-hour and 7-day limits, its per-model weekly limits (such as Fable), and Antigravity's Gemini and Claude/GPT limits as bars. Expand "By model" to see each Claude model's share of tokens. |
-| [`sessions`](sessions/) | Shows the model, reasoning effort and context usage of the current session, then lists your other sessions and their running sub-agents as a tree. Commands still running in the background after the agent has replied (such as a training script) are shown too. |
+| [`ai-usage`](ai-usage/) | Shows Claude Code's 5-hour and 7-day limits, its per-model weekly limits (such as Fable), and Antigravity's Gemini and Claude/GPT limits as bars. Expand "By model" to see each Claude model's share of tokens. Click a section's title to fold it down to one line. |
+| [`sessions`](sessions/) | Shows the model, reasoning effort and context usage of the current session, then lists your other sessions and their running sub-agents as a tree. Commands still running in the background after the agent has replied (such as a training script) are shown too. Switch from List to Diagram to see the same sessions as boxes joined by lines: this computer, its sessions, and what each one started. |
 | [`tabs-flow`](tabs-flow/) | Adds a **Flow** button to Herdr's default tab bar and opens this panel automatically whenever you switch spaces. |
 
 They are built to work together, but each one can be installed on its own.

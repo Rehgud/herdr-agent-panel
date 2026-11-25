@@ -42,6 +42,11 @@ export const TEXT = {
     current: "Current session",
     guide: "Guide",
     others: "Other sessions",
+    all: "All sessions",
+    list: "List",
+    diagram: "Diagram",
+    thisComputer: "This computer",
+    sessionsN: (n) => (n === 1 ? "1 session" : `${n} sessions`),
     noneHere: "No agent sessions in this space",
     noOthers: "No other sessions",
     subagent: "Sub-agent",
@@ -86,6 +91,11 @@ export const TEXT = {
     current: "현재 세션",
     guide: "안내",
     others: "다른 세션",
+    all: "모든 세션",
+    list: "List",
+    diagram: "Diagram",
+    thisComputer: "이 컴퓨터",
+    sessionsN: (n) => `세션 ${n}개`,
     noneHere: "이 스페이스에는 에이전트 세션이 없어요",
     noOthers: "다른 세션이 없어요",
     subagent: "서브에이전트",
@@ -268,6 +278,24 @@ export function foldSubs(subs, open, max = 6) {
   const live = subs.filter((s) => !s.done), done = subs.filter((s) => s.done).sort((a, b) => (b.lastAt ?? 0) - (a.lastAt ?? 0));
   const shown = open ? done.slice(0, max) : [];
   return { live, done: shown, finished: done.length, more: open ? done.length - shown.length : 0 };
+}
+
+// The diagram's boxes, left to right by depth: a leaf takes the next row, a parent sits level
+// with the middle of its children, and half a row parts siblings down to depth `apart` (the
+// sessions under a machine). `under(x)`: what x has under it. Rows are in row units; parents
+// come before their children.
+export function placeTree(roots, under, apart = 0) {
+  const boxes = [];
+  let row = 0;
+  const place = (x, depth, parent) => {
+    const box = { x, depth, parent, row: 0 };
+    boxes.push(box);
+    const kids = under(x).map((k, i) => { if (i && depth + 1 <= apart) row += 0.5; return place(k, depth + 1, box); });
+    box.row = kids.length ? (kids[0].row + kids[kids.length - 1].row) / 2 : row++;
+    return box;
+  };
+  roots.forEach((r, i) => { if (i) row += 0.5; place(r, 0, null); });
+  return { boxes, rows: row, depth: Math.max(0, ...boxes.map((b) => b.depth)) };
 }
 
 // A session's name: the folder it was started in ("~" at home), as the user names sessions.
